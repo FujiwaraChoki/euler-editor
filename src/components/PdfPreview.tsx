@@ -30,6 +30,12 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const pendingScrollRestoreRef = useRef<{
+    top: number;
+    maxScrollableTop: number;
+    ratio: number;
+  } | null>(null);
+  const restoreTimersRef = useRef<number[]>([]);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -83,9 +89,50 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
   // When a new pdfBase64 comes in, set it as nextPdf for loading
   useEffect(() => {
     if (pdfBase64 && pdfBase64 !== currentPdf) {
+      const container = containerRef.current;
+      if (container) {
+        const maxScrollableTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+        const top = container.scrollTop;
+        pendingScrollRestoreRef.current = {
+          top,
+          maxScrollableTop,
+          ratio: maxScrollableTop > 0 ? top / maxScrollableTop : 0,
+        };
+      }
       setNextPdf(pdfBase64);
     }
   }, [pdfBase64]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restoreScrollPosition = useCallback(() => {
+    const snapshot = pendingScrollRestoreRef.current;
+    const container = containerRef.current;
+    if (!snapshot || !container) return;
+
+    const applyRestore = () => {
+      const maxScrollableTop = Math.max(container.scrollHeight - container.clientHeight, 0);
+      const absoluteTarget = Math.min(snapshot.top, maxScrollableTop);
+      const ratioTarget = Math.round(maxScrollableTop * snapshot.ratio);
+      const target = maxScrollableTop >= snapshot.maxScrollableTop ? absoluteTarget : ratioTarget;
+      container.scrollTop = target;
+    };
+    const clearTrackedTimer = (timerId: number) => {
+      restoreTimersRef.current = restoreTimersRef.current.filter((id) => id !== timerId);
+    };
+
+    // Apply over multiple frames while PDF pages finalize their layout.
+    applyRestore();
+    requestAnimationFrame(applyRestore);
+    const firstTimer = window.setTimeout(() => {
+      applyRestore();
+      clearTrackedTimer(firstTimer);
+    }, 40);
+    const secondTimer = window.setTimeout(() => {
+      applyRestore();
+      pendingScrollRestoreRef.current = null;
+      clearTrackedTimer(secondTimer);
+    }, 120);
+    restoreTimersRef.current.push(firstTimer, secondTimer);
+  }, []);
 
   // When the next PDF loads successfully, swap it to current
   const handleNextPdfLoadSuccess = useCallback(
@@ -101,8 +148,9 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
     ({ numPages: pages }: { numPages: number }) => {
       setNumPages(pages);
       setControlsVisible(true);
+      restoreScrollPosition();
     },
-    []
+    [restoreScrollPosition]
   );
 
   // Convert base64 to a data object for react-pdf
@@ -176,6 +224,9 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      for (const timerId of restoreTimersRef.current) {
+        window.clearTimeout(timerId);
+      }
     };
   }, []);
 
