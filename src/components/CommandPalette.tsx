@@ -4,6 +4,7 @@ import {
   buildFontOptions,
   normalizeStoredFontName,
 } from "../styles/fonts";
+import { installCli } from "../lib/tauri-commands";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -174,6 +175,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           setQuery("");
           const currentCodeFontIndex = codeFontOptions.findIndex((font) => font.name === currentCodeFontName);
           setSelectedIndex(currentCodeFontIndex >= 0 ? currentCodeFontIndex : 0);
+        },
+      },
+      {
+        id: "install-cli",
+        label: "Install 'euler' CLI",
+        description: "Add euler command to PATH (/usr/local/bin)",
+        onSelect: async () => {
+          onClose();
+          try {
+            const result = await installCli();
+            alert(result);
+          } catch (err) {
+            alert(String(err));
+          }
         },
       },
       {

@@ -54,3 +54,7 @@ export async function saveTheme(name: string, theme: any): Promise<void> {
 export async function getSystemFonts(): Promise<string[]> {
   return invoke<string[]>("get_system_fonts");
 }
+
+export async function installCli(): Promise<string> {
+  return invoke<string>("install_cli");
+}

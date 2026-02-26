@@ -36,8 +36,36 @@ pub async fn compile_tex(
     // Spawn the compiler process.
     // Set the working directory to the source file's directory so that
     // relative paths (\input, \includegraphics, \bibliography, etc.) resolve correctly.
+    //
+    // On macOS, apps launched from Finder get a minimal PATH that doesn't
+    // include common LaTeX installation directories. Augment PATH so that
+    // compilers installed via MacTeX, Homebrew, or Nix are found.
+    let path_env = {
+        let base = std::env::var("PATH").unwrap_or_default();
+        let home = std::env::var("HOME").unwrap_or_default();
+        let nix_profile = format!("{}/.nix-profile/bin", home);
+        let extra_static = [
+            "/Library/TeX/texbin",
+            "/usr/texbin",
+            "/usr/local/texlive/2025/bin/universal-darwin",
+            "/usr/local/texlive/2024/bin/universal-darwin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/nix/var/nix/profiles/default/bin",
+        ];
+        let mut parts: Vec<String> = extra_static.iter().map(|s| s.to_string()).collect();
+        if !home.is_empty() {
+            parts.push(nix_profile);
+        }
+        if !base.is_empty() {
+            parts.push(base);
+        }
+        parts.join(":")
+    };
+
     let cwd = working_dir.unwrap_or(tmp_dir);
     let output = Command::new(compiler)
+        .env("PATH", &path_env)
         .current_dir(cwd)
         .arg("-interaction=nonstopmode")
         .arg("-halt-on-error")

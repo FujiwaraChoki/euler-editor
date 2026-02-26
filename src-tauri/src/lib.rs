@@ -3,6 +3,7 @@ mod compiler;
 mod config;
 mod error;
 
+use commands::cli::install_cli;
 use commands::compile::compile_latex;
 use commands::file_ops::{create_file, file_exists, read_file, write_file};
 use commands::fonts::get_system_fonts;
@@ -33,6 +34,7 @@ pub fn run() {
             get_themes,
             get_theme,
             save_theme,
+            install_cli,
         ])
         .setup(|_app| {
             let home = dirs::home_dir().expect("Could not determine home directory");
