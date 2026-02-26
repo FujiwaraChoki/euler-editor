@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: EulerConfig = {
   relative_line_numbers: false,
   show_line_numbers: true,
   split_orientation: "horizontal",
+  sidebar_visible: false,
 };
 
 interface UseSettingsReturn {

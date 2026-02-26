@@ -123,6 +123,14 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
+        id: "toggle-sidebar",
+        label: `File Tree: ${settings.sidebar_visible ? "Visible" : "Hidden"}`,
+        description: "Toggle file explorer sidebar",
+        onSelect: () => {
+          onUpdateSettings({ sidebar_visible: !settings.sidebar_visible });
+        },
+      },
+      {
         id: "toggle-split-orientation",
         label: `Split: ${settings.split_orientation === "vertical" ? "Vertical" : "Horizontal"}`,
         description: "Toggle split orientation (horizontal/vertical)",

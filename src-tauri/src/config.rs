@@ -18,6 +18,8 @@ pub struct EulerConfig {
     pub show_line_numbers: bool,
     #[serde(default = "default_split_orientation")]
     pub split_orientation: String,
+    #[serde(default)]
+    pub sidebar_visible: bool,
 }
 
 fn default_true() -> bool {
@@ -49,6 +51,7 @@ impl Default for EulerConfig {
             relative_line_numbers: false,
             show_line_numbers: true,
             split_orientation: default_split_orientation(),
+            sidebar_visible: false,
         }
     }
 }
