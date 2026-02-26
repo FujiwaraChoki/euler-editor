@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS: EulerConfig = {
   debounce_ms: 1000,
   vim_mode: false,
   relative_line_numbers: false,
+  show_line_numbers: true,
 };
 
 interface UseSettingsReturn {
