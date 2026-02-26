@@ -123,6 +123,16 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
+        id: "toggle-split-orientation",
+        label: `Split: ${settings.split_orientation === "vertical" ? "Vertical" : "Horizontal"}`,
+        description: "Toggle split orientation (horizontal/vertical)",
+        onSelect: () => {
+          onUpdateSettings({
+            split_orientation: settings.split_orientation === "vertical" ? "horizontal" : "vertical",
+          });
+        },
+      },
+      {
         id: "compiler",
         label: `Switch Compiler (Current: ${settings.compiler})`,
         description: "Change LaTeX compiler",

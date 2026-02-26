@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS: EulerConfig = {
   vim_mode: false,
   relative_line_numbers: false,
   show_line_numbers: true,
+  split_orientation: "horizontal",
 };
 
 interface UseSettingsReturn {

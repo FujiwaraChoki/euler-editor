@@ -284,7 +284,7 @@ const App: React.FC = () => {
 
       {/* Editor + Preview */}
       <div style={mainStyle}>
-        <Group orientation="horizontal" onLayoutChanged={handlePanelResize}>
+        <Group orientation={settings.split_orientation === "vertical" ? "vertical" : "horizontal"} onLayoutChanged={handlePanelResize}>
           <Panel defaultSize={50} minSize={30}>
             <Editor
               value={content}
@@ -297,7 +297,7 @@ const App: React.FC = () => {
               codeFontFamily={codeFontFamily}
             />
           </Panel>
-          <Separator style={handleStyle} />
+          <Separator style={settings.split_orientation === "vertical" ? verticalHandleStyle : handleStyle} />
           <Panel defaultSize={50} minSize={20}>
             <PdfPreview
               pdfBase64={pdfBase64}
@@ -521,6 +521,12 @@ const handleStyle: React.CSSProperties = {
   width: "1px",
   background: "var(--border)",
   cursor: "col-resize",
+};
+
+const verticalHandleStyle: React.CSSProperties = {
+  height: "1px",
+  background: "var(--border)",
+  cursor: "row-resize",
 };
 
 export default App;

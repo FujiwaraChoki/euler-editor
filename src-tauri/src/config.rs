@@ -16,10 +16,16 @@ pub struct EulerConfig {
     pub relative_line_numbers: bool,
     #[serde(default = "default_true")]
     pub show_line_numbers: bool,
+    #[serde(default = "default_split_orientation")]
+    pub split_orientation: String,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_split_orientation() -> String {
+    "horizontal".to_string()
 }
 
 fn default_ui_font() -> String {
@@ -42,6 +48,7 @@ impl Default for EulerConfig {
             vim_mode: false,
             relative_line_numbers: false,
             show_line_numbers: true,
+            split_orientation: default_split_orientation(),
         }
     }
 }

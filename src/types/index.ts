@@ -15,6 +15,7 @@ export interface EulerConfig {
   vim_mode: boolean;
   relative_line_numbers: boolean;
   show_line_numbers: boolean;
+  split_orientation: "horizontal" | "vertical";
 }
 
 export interface ThemeColors {
