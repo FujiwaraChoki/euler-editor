@@ -16,6 +16,15 @@ export interface EulerConfig {
   relative_line_numbers: boolean;
   show_line_numbers: boolean;
   split_orientation: "horizontal" | "vertical";
+  sidebar_visible: boolean;
+}
+
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children: FileTreeNode[] | null; // null = not loaded yet
+  isExpanded: boolean;
 }
 
 export interface ThemeColors {

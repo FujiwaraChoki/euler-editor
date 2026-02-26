@@ -30,6 +30,7 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const pageVisibilityRef = useRef<Map<number, number>>(new Map());
   const pendingScrollRestoreRef = useRef<{
     top: number;
     maxScrollableTop: number;
@@ -140,6 +141,7 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
       setCurrentPdf(nextPdf);
       setNextPdf(null);
       setNumPages(pages);
+      setCurrentPage((prevPage) => Math.min(Math.max(prevPage, 1), pages));
     },
     [nextPdf]
   );
@@ -147,6 +149,7 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
   const handleCurrentPdfLoadSuccess = useCallback(
     ({ numPages: pages }: { numPages: number }) => {
       setNumPages(pages);
+      setCurrentPage((prevPage) => Math.min(Math.max(prevPage, 1), pages));
       setControlsVisible(true);
       restoreScrollPosition();
     },
@@ -178,25 +181,37 @@ const PdfPreview: React.FC<PdfPreviewProps> = ({
 
     const observer = new IntersectionObserver(
       (entries) => {
-        let maxRatio = 0;
-        let mostVisible = currentPage;
         for (const entry of entries) {
           const pageNum = Number(entry.target.getAttribute("data-page"));
-          if (entry.intersectionRatio > maxRatio) {
-            maxRatio = entry.intersectionRatio;
+          if (!Number.isFinite(pageNum)) continue;
+          pageVisibilityRef.current.set(pageNum, entry.intersectionRatio);
+        }
+
+        let maxRatio = 0;
+        let mostVisible = 1;
+        for (const [pageNum, ratio] of pageVisibilityRef.current) {
+          if (ratio > maxRatio || (ratio === maxRatio && pageNum < mostVisible)) {
+            maxRatio = ratio;
             mostVisible = pageNum;
           }
         }
-        if (maxRatio > 0) setCurrentPage(mostVisible);
+
+        if (maxRatio > 0) {
+          setCurrentPage((prevPage) => (prevPage === mostVisible ? prevPage : mostVisible));
+        }
       },
       { root: container, threshold: [0, 0.25, 0.5, 0.75, 1] }
     );
 
+    pageVisibilityRef.current.clear();
     for (const [, el] of pageRefs.current) {
       observer.observe(el);
     }
 
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      pageVisibilityRef.current.clear();
+    };
   }, [numPages, currentPdf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scrollToPage = useCallback((page: number) => {

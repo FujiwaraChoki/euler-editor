@@ -1,14 +1,17 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Group, Panel, Separator } from "react-resizable-panels";
+import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
 import type { editor as monacoEditor } from "monaco-editor";
 import Editor from "./components/Editor";
 import PdfPreview from "./components/PdfPreview";
 import CompileIndicator from "./components/CompileIndicator";
 import CommandPalette from "./components/CommandPalette";
+import QuickOpen from "./components/QuickOpen";
+import FileTree from "./components/FileTree";
 import { useSettings } from "./hooks/useSettings";
 import { useTheme } from "./hooks/useTheme";
 import { useCompiler } from "./hooks/useCompiler";
 import { useFileOperations } from "./hooks/useFileOperations";
+import { useFileTree } from "./hooks/useFileTree";
 import { useCliArgs } from "./hooks/useCliArgs";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { getSystemFonts } from "./lib/tauri-commands";
@@ -37,6 +40,7 @@ const App: React.FC = () => {
   const { initialFilePath } = useCliArgs();
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null);
   const uiFontName = useMemo(
@@ -56,12 +60,65 @@ const App: React.FC = () => {
     [codeFontName],
   );
 
+  const sidebarPanelRef = useRef<PanelImperativeHandle>(null);
+
+  const sidebarRootPath = useMemo(() => {
+    if (!filePath) return null;
+    const parts = filePath.split("/");
+    parts.pop();
+    return parts.join("/") || null;
+  }, [filePath]);
+
+  const {
+    nodes: fileTreeNodes,
+    rootPath: fileTreeRootPath,
+    toggleExpand: fileTreeToggleExpand,
+    rootName: fileTreeRootName,
+    createFile: fileTreeCreateFile,
+    createFolder: fileTreeCreateFolder,
+    renameNode: fileTreeRenameNode,
+    deleteNode: fileTreeDeleteNode,
+  } = useFileTree(sidebarRootPath);
+
+  const toggleSidebar = useCallback(() => {
+    const panel = sidebarPanelRef.current;
+    if (!panel) return;
+    if (panel.isCollapsed()) {
+      panel.expand();
+      updateSettings({ sidebar_visible: true });
+    } else {
+      panel.collapse();
+      updateSettings({ sidebar_visible: false });
+    }
+  }, [updateSettings]);
+
+  const handleSidebarResize = useCallback(
+    (panelSize: { asPercentage: number; inPixels: number }) => {
+      const collapsed = panelSize.inPixels === 0;
+      if (collapsed && settings.sidebar_visible) {
+        updateSettings({ sidebar_visible: false });
+      } else if (!collapsed && !settings.sidebar_visible) {
+        updateSettings({ sidebar_visible: true });
+      }
+    },
+    [settings.sidebar_visible, updateSettings],
+  );
+
+  const handleOpenFileFromTree = useCallback(
+    (path: string) => {
+      openFile(path).catch(() => {});
+    },
+    [openFile],
+  );
+
   const fileStem = filePath
     ? filePath.split("/").pop()?.replace(/\.tex$/i, "") ?? "untitled"
     : "untitled";
 
+  const isTexFile = !!filePath && /\.tex$/i.test(filePath);
+
   const { compileResult, isCompiling } = useCompiler({
-    content: hasFile ? content : "",
+    content: hasFile && isTexFile ? content : "",
     fileStem,
     compiler: settings.compiler,
     debounceMs: settings.debounce_ms,
@@ -149,7 +206,9 @@ const App: React.FC = () => {
 
   const shortcuts = useMemo(
     () => ({
-      "mod+k": () => setCommandPaletteOpen(true),
+      "mod+k": () => { setQuickOpenOpen(false); setCommandPaletteOpen(true); },
+      "mod+,": () => { setQuickOpenOpen(false); setCommandPaletteOpen(true); },
+      "mod+p": () => { setCommandPaletteOpen(false); setQuickOpenOpen(true); },
       "mod+o": () => { openFileDialog().catch(() => {}); },
       "mod+s": () => { saveFile().catch(() => {}); },
       "mod+n": () => { createNewFile(); },
@@ -157,8 +216,9 @@ const App: React.FC = () => {
       "mod+shift+plus": increaseSize,
       "mod+equal": increaseSize,
       "mod+minus": decreaseSize,
+      "mod+b": toggleSidebar,
     }),
-    [saveFile, openFileDialog, createNewFile, increaseSize, decreaseSize]
+    [saveFile, openFileDialog, createNewFile, increaseSize, decreaseSize, toggleSidebar]
   );
   useKeyboardShortcuts(shortcuts);
 
@@ -223,6 +283,13 @@ const App: React.FC = () => {
           onSetTheme={handleSetTheme}
           systemFonts={systemFonts}
         />
+        <QuickOpen
+          isOpen={quickOpenOpen}
+          onClose={() => setQuickOpenOpen(false)}
+          rootPath={sidebarRootPath}
+          onOpenFile={(path) => openFile(path).catch(() => {})}
+          currentFilePath={filePath}
+        />
       </div>
     );
   }
@@ -282,31 +349,58 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* Editor + Preview */}
+      {/* Sidebar + Editor + Preview */}
       <div style={mainStyle}>
-        <Group orientation={settings.split_orientation === "vertical" ? "vertical" : "horizontal"} onLayoutChanged={handlePanelResize}>
-          <Panel defaultSize={50} minSize={30}>
-            <Editor
-              value={content}
-              onChange={handleEditorChange}
-              onMount={handleEditorMount}
-              vimMode={settings.vim_mode}
-              relativeLineNumbers={settings.relative_line_numbers}
-              showLineNumbers={settings.show_line_numbers}
-              fontSize={editorFontSize}
-              codeFontFamily={codeFontFamily}
+        <Group orientation="horizontal" onLayoutChanged={handlePanelResize}>
+          <Panel
+            panelRef={sidebarPanelRef}
+            defaultSize={settings.sidebar_visible ? 220 : 0}
+            minSize={160}
+            maxSize={400}
+            collapsible
+            collapsedSize={0}
+            onResize={handleSidebarResize}
+          >
+            <FileTree
+              rootName={fileTreeRootName}
+              rootPath={fileTreeRootPath}
+              nodes={fileTreeNodes}
+              activeFilePath={filePath}
+              onToggleExpand={fileTreeToggleExpand}
+              onOpenFile={handleOpenFileFromTree}
+              onCreateFile={fileTreeCreateFile}
+              onCreateFolder={fileTreeCreateFolder}
+              onRenameNode={fileTreeRenameNode}
+              onDeleteNode={fileTreeDeleteNode}
             />
           </Panel>
-          <Separator style={settings.split_orientation === "vertical" ? verticalHandleStyle : handleStyle} />
-          <Panel defaultSize={50} minSize={20}>
-            <PdfPreview
-              pdfBase64={pdfBase64}
-              errors={compileErrors}
-              isCompiling={isCompiling}
-              zoom={pdfZoom}
-              onHoverChange={setIsPdfHovered}
-              onFocusChange={setIsPdfFocused}
-            />
+          <Separator style={handleStyle} />
+          <Panel minSize={200}>
+            <Group orientation={settings.split_orientation === "vertical" ? "vertical" : "horizontal"} onLayoutChanged={handlePanelResize}>
+              <Panel defaultSize={50} minSize={30}>
+                <Editor
+                  value={content}
+                  onChange={handleEditorChange}
+                  onMount={handleEditorMount}
+                  vimMode={settings.vim_mode}
+                  relativeLineNumbers={settings.relative_line_numbers}
+                  showLineNumbers={settings.show_line_numbers}
+                  fontSize={editorFontSize}
+                  codeFontFamily={codeFontFamily}
+                />
+              </Panel>
+              <Separator style={settings.split_orientation === "vertical" ? verticalHandleStyle : handleStyle} />
+              <Panel defaultSize={50} minSize={20}>
+                <PdfPreview
+                  pdfBase64={pdfBase64}
+                  errors={compileErrors}
+                  isCompiling={isCompiling}
+                  zoom={pdfZoom}
+                  onHoverChange={setIsPdfHovered}
+                  onFocusChange={setIsPdfFocused}
+                />
+              </Panel>
+            </Group>
           </Panel>
         </Group>
       </div>
@@ -322,6 +416,13 @@ const App: React.FC = () => {
         currentThemeName={currentTheme.name}
         onSetTheme={handleSetTheme}
         systemFonts={systemFonts}
+      />
+      <QuickOpen
+        isOpen={quickOpenOpen}
+        onClose={() => setQuickOpenOpen(false)}
+        rootPath={sidebarRootPath}
+        onOpenFile={(path) => openFile(path).catch(() => {})}
+        currentFilePath={filePath}
       />
     </div>
   );
