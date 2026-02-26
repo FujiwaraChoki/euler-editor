@@ -25,16 +25,7 @@ export const latexMonarchTokens: languages.IMonarchLanguage = {
   defaultToken: "",
   tokenPostfix: ".latex",
 
-  keywords: [
-    "documentclass", "usepackage", "begin", "end",
-    "section", "subsection", "subsubsection", "paragraph",
-    "chapter", "part", "title", "author", "date", "maketitle",
-    "tableofcontents", "include", "input", "bibliography",
-    "newcommand", "renewcommand", "newenvironment",
-    "label", "ref", "cite", "footnote", "caption",
-    "textbf", "textit", "texttt", "emph", "underline",
-    "item", "hline", "toprule", "midrule", "bottomrule",
-  ],
+  keywords: "\\\\(?:documentclass|usepackage|begin|end|section|subsection|subsubsection|paragraph|chapter|part|title|author|date|maketitle|tableofcontents|include|input|bibliography|newcommand|renewcommand|newenvironment|label|ref|cite|footnote|caption|textbf|textit|texttt|emph|underline|item|hline|toprule|midrule|bottomrule)",
 
   tokenizer: {
     root: [
@@ -59,7 +50,7 @@ export const latexMonarchTokens: languages.IMonarchLanguage = {
       // Commands with keyword check
       [/\\[a-zA-Z@]+/, {
         cases: {
-          "\\\\@keywords": "keyword",
+          "@keywords": "keyword",
           "@default": "command",
         },
       }],
