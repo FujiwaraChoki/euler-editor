@@ -7,6 +7,15 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in PDF preview */
+.react-pdf__Page *,
+.react-pdf__Document * {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 :root {
@@ -33,6 +42,12 @@ html, body, #root {
   color: var(--text-primary);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* Prevent Monaco from bolding the active line number (causes misalignment) */
+.monaco-editor .line-numbers.active-line-number {
+  font-weight: 400 !important;
 }
 
 /* Scrollbar styling */

@@ -1,10 +1,9 @@
-import React, { useRef, useCallback, useEffect } from "react";
+import React, { useRef, useCallback, useEffect, useState } from "react";
 import MonacoEditor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type { editor as monacoEditor } from "monaco-editor";
 import { initVimMode } from "monaco-vim";
 import { latexLanguageConfig, latexMonarchTokens } from "../lib/latex-language";
-import { createMonacoTheme } from "../styles/monaco-theme";
-import { DEFAULT_DARK_THEME } from "../styles/themes";
+import { registerLatexCompletionProvider } from "../lib/latex-snippets";
 import { EULER_MONACO_THEME } from "../hooks/useTheme";
 
 interface EditorProps {
@@ -13,15 +12,30 @@ interface EditorProps {
   onMount?: (editor: monacoEditor.IStandaloneCodeEditor) => void;
   className?: string;
   vimMode?: boolean;
+  relativeLineNumbers?: boolean;
+  showLineNumbers?: boolean;
+  fontSize?: number;
+  codeFontFamily?: string;
 }
 
 const LATEX_LANGUAGE_ID = "latex";
 
-const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, className, vimMode = false }) => {
+const Editor: React.FC<EditorProps> = ({
+  value,
+  onChange,
+  onMount: onMountProp,
+  className,
+  vimMode = false,
+  relativeLineNumbers = false,
+  showLineNumbers = true,
+  fontSize = 14,
+  codeFontFamily = "\"Geist Mono\", \"SF Mono\", Menlo, monospace",
+}) => {
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null);
   const languageRegisteredRef = useRef(false);
   const vimModeRef = useRef<ReturnType<typeof initVimMode> | null>(null);
   const statusBarRef = useRef<HTMLDivElement | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
 
   const handleMount: OnMount = useCallback(
     (editor, monaco) => {
@@ -39,17 +53,14 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
 
         monaco.languages.setLanguageConfiguration(LATEX_LANGUAGE_ID, latexLanguageConfig);
         monaco.languages.setMonarchTokensProvider(LATEX_LANGUAGE_ID, latexMonarchTokens);
+        registerLatexCompletionProvider(monaco);
 
         languageRegisteredRef.current = true;
       }
 
-      // Define and set the Monaco theme
-      const monacoThemeData = createMonacoTheme(DEFAULT_DARK_THEME.colors);
-      monaco.editor.defineTheme(EULER_MONACO_THEME, monacoThemeData);
-      monaco.editor.setTheme(EULER_MONACO_THEME);
-
       // Focus the editor
       editor.focus();
+      setEditorReady(true);
 
       if (onMountProp) {
         onMountProp(editor);
@@ -78,6 +89,11 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
         vimModeRef.current.dispose();
         vimModeRef.current = null;
       }
+      // Ensure non-vim mode always restores Monaco's standard cursor.
+      editor.updateOptions({
+        cursorStyle: "line",
+        cursorBlinking: "blink",
+      });
       // Clear status bar content
       if (statusBarRef.current) {
         statusBarRef.current.textContent = "";
@@ -90,7 +106,7 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
         vimModeRef.current = null;
       }
     };
-  }, [vimMode]);
+  }, [vimMode, editorReady]);
 
   const handleChange: OnChange = useCallback(
     (val) => {
@@ -101,7 +117,7 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
 
   return (
     <div className={className} style={{ height: "100%", width: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div style={{ flex: 1, minHeight: 0, paddingLeft: 12, background: "var(--bg-secondary)" }}>
         <MonacoEditor
           height="100%"
           width="100%"
@@ -111,16 +127,20 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
           onChange={handleChange}
           onMount={handleMount}
           options={{
-            fontFamily: "'Geist Mono', 'SF Mono', 'Menlo', monospace",
-            fontSize: 14,
+            fontFamily: codeFontFamily,
+            fontSize,
             minimap: { enabled: false },
             wordWrap: "on",
             smoothScrolling: true,
-            lineNumbers: "on",
+            lineNumbers: showLineNumbers ? (relativeLineNumbers ? "relative" : "on") : "off",
             renderWhitespace: "selection",
-            padding: { top: 16 },
+            padding: { top: 16, bottom: 16 },
+            glyphMargin: false,
+            folding: false,
+            lineNumbersMinChars: 3,
+            lineDecorationsWidth: 8,
             scrollBeyondLastLine: false,
-            automaticLayout: false,
+            automaticLayout: true,
             overviewRulerLanes: 0,
             hideCursorInOverviewRuler: true,
             overviewRulerBorder: false,
@@ -130,13 +150,12 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
               useShadows: false,
             },
             contextmenu: false,
-            quickSuggestions: false,
+            quickSuggestions: { strings: false, comments: false, other: false },
             parameterHints: { enabled: false },
-            suggestOnTriggerCharacters: false,
+            suggestOnTriggerCharacters: true,
             tabSize: 2,
             insertSpaces: true,
             bracketPairColorization: { enabled: false },
-            cursorStyle: vimMode ? "block" : "line",
           }}
           loading={
             <div
@@ -156,21 +175,33 @@ const Editor: React.FC<EditorProps> = ({ value, onChange, onMount: onMountProp, 
         />
       </div>
       {vimMode && (
-        <div
-          ref={statusBarRef}
-          style={{
-            height: "24px",
-            minHeight: "24px",
-            padding: "0 12px",
-            display: "flex",
-            alignItems: "center",
-            background: "var(--bg-tertiary)",
-            borderTop: "1px solid var(--border)",
-            fontFamily: "'Geist Mono', 'SF Mono', 'Menlo', monospace",
-            fontSize: "11px",
-            color: "var(--text-secondary)",
-          }}
-        />
+        <>
+          <style>{`
+            .euler-vim-status input {
+              all: unset;
+              font-family: inherit;
+              font-size: inherit;
+              color: var(--text-primary);
+            }
+          `}</style>
+          <div
+            ref={statusBarRef}
+            className="euler-vim-status"
+            style={{
+              height: "24px",
+              minHeight: "24px",
+              padding: "0 12px",
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              background: "var(--bg-tertiary)",
+              borderTop: "1px solid var(--border)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              color: "var(--text-muted)",
+            }}
+          />
+        </>
       )}
     </div>
   );

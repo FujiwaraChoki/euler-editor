@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { EulerConfig, Theme } from "../types";
+import {
+  buildFontOptions,
+  normalizeStoredFontName,
+} from "../styles/fonts";
 
 interface CommandPaletteProps {
   isOpen: boolean;
@@ -11,9 +15,12 @@ interface CommandPaletteProps {
   themes: Theme[];
   currentThemeName: string;
   onSetTheme: (name: string) => void;
+  systemFonts: string[];
 }
 
-type View = "main" | "settings" | "themes";
+type View = "main" | "themes" | "compiler" | "debounce" | "ui-fonts" | "code-fonts";
+
+const COMPILER_OPTIONS = ["pdflatex", "xelatex", "lualatex"] as const;
 
 interface Action {
   id: string;
@@ -32,6 +39,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   themes,
   currentThemeName,
   onSetTheme,
+  systemFonts,
 }) => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -51,16 +59,88 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
   }, [isOpen]);
 
+  const debouncePresets = useMemo(
+    () => [
+      { value: 200, label: "200ms (Fast)" },
+      { value: 500, label: "500ms" },
+      { value: 800, label: "800ms (Default)" },
+      { value: 1500, label: "1500ms" },
+      { value: 3000, label: "3000ms (Slow)" },
+    ],
+    [],
+  );
+
+  const currentUiFontName = useMemo(
+    () => normalizeStoredFontName(settings.ui_font, "ui"),
+    [settings.ui_font],
+  );
+  const currentCodeFontName = useMemo(
+    () => normalizeStoredFontName(settings.code_font, "code"),
+    [settings.code_font],
+  );
+  const uiFontOptions = useMemo(
+    () => buildFontOptions(systemFonts, "ui"),
+    [systemFonts],
+  );
+  const codeFontOptions = useMemo(
+    () => buildFontOptions(systemFonts, "code"),
+    [systemFonts],
+  );
+
   const mainActions: Action[] = useMemo(
     () => [
       {
-        id: "settings",
-        label: "Settings",
-        description: "Configure compiler, auto-save, and more",
+        id: "toggle-autosave",
+        label: `Auto-save: ${settings.auto_save ? "On" : "Off"}`,
+        description: "Toggle auto-save",
         onSelect: () => {
-          setView("settings");
+          onUpdateSettings({ auto_save: !settings.auto_save });
+        },
+      },
+      {
+        id: "toggle-vim",
+        label: `Vim Mode: ${settings.vim_mode ? "On" : "Off"}`,
+        description: "Toggle Vim keybindings",
+        onSelect: () => {
+          onUpdateSettings({ vim_mode: !settings.vim_mode });
+        },
+      },
+      {
+        id: "toggle-line-numbers",
+        label: `Line Numbers: ${settings.show_line_numbers ? "On" : "Off"}`,
+        description: "Toggle line numbers visibility",
+        onSelect: () => {
+          onUpdateSettings({ show_line_numbers: !settings.show_line_numbers });
+        },
+      },
+      {
+        id: "toggle-relative-lines",
+        label: `Relative Line Numbers: ${settings.relative_line_numbers ? "On" : "Off"}`,
+        description: "Toggle relative line numbers",
+        onSelect: () => {
+          onUpdateSettings({ relative_line_numbers: !settings.relative_line_numbers });
+        },
+      },
+      {
+        id: "compiler",
+        label: `Switch Compiler (Current: ${settings.compiler})`,
+        description: "Change LaTeX compiler",
+        onSelect: () => {
+          setView("compiler");
           setQuery("");
-          setSelectedIndex(0);
+          const currentCompilerIndex = COMPILER_OPTIONS.findIndex((compiler) => compiler === settings.compiler);
+          setSelectedIndex(currentCompilerIndex >= 0 ? currentCompilerIndex : 0);
+        },
+      },
+      {
+        id: "debounce",
+        label: `Compile Debounce (${settings.debounce_ms}ms)`,
+        description: "Change compile delay",
+        onSelect: () => {
+          setView("debounce");
+          setQuery("");
+          const currentDebounceIndex = debouncePresets.findIndex((preset) => preset.value === settings.debounce_ms);
+          setSelectedIndex(currentDebounceIndex >= 0 ? currentDebounceIndex : 0);
         },
       },
       {
@@ -70,7 +150,30 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         onSelect: () => {
           setView("themes");
           setQuery("");
-          setSelectedIndex(0);
+          const currentThemeIndex = themes.findIndex((theme) => theme.name === currentThemeName);
+          setSelectedIndex(currentThemeIndex >= 0 ? currentThemeIndex : 0);
+        },
+      },
+      {
+        id: "ui-font",
+        label: `UI Font (Current: ${currentUiFontName})`,
+        description: "Change app interface typography",
+        onSelect: () => {
+          setView("ui-fonts");
+          setQuery("");
+          const currentUiFontIndex = uiFontOptions.findIndex((font) => font.name === currentUiFontName);
+          setSelectedIndex(currentUiFontIndex >= 0 ? currentUiFontIndex : 0);
+        },
+      },
+      {
+        id: "code-font",
+        label: `Code Font (Current: ${currentCodeFontName})`,
+        description: "Change editor monospace font",
+        onSelect: () => {
+          setView("code-fonts");
+          setQuery("");
+          const currentCodeFontIndex = codeFontOptions.findIndex((font) => font.name === currentCodeFontName);
+          setSelectedIndex(currentCodeFontIndex >= 0 ? currentCodeFontIndex : 0);
         },
       },
       {
@@ -92,7 +195,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
     ],
-    [onNewDocument, onOpenDocument, onClose]
+    [
+      settings,
+      onUpdateSettings,
+      onNewDocument,
+      onOpenDocument,
+      onClose,
+      debouncePresets,
+      themes,
+      currentThemeName,
+      currentUiFontName,
+      currentCodeFontName,
+      uiFontOptions,
+      codeFontOptions,
+    ],
   );
 
   const themeActions: Action[] = useMemo(
@@ -106,18 +222,83 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           onClose();
         },
       })),
-    [themes, currentThemeName, onSetTheme, onClose]
+    [themes, currentThemeName, onSetTheme, onClose],
   );
 
-  const currentActions = view === "main" ? mainActions : view === "themes" ? themeActions : [];
+  const compilerActions: Action[] = useMemo(
+    () =>
+      COMPILER_OPTIONS.map((c) => ({
+        id: `compiler-${c}`,
+        label: c,
+        description: c === settings.compiler ? "Current" : undefined,
+        onSelect: () => {
+          onUpdateSettings({ compiler: c });
+          onClose();
+        },
+      })),
+    [settings.compiler, onUpdateSettings, onClose],
+  );
+
+  const debounceActions: Action[] = useMemo(
+    () =>
+      debouncePresets.map((p) => ({
+        id: `debounce-${p.value}`,
+        label: p.label,
+        description: p.value === settings.debounce_ms ? "Current" : undefined,
+        onSelect: () => {
+          onUpdateSettings({ debounce_ms: p.value });
+          onClose();
+        },
+      })),
+    [debouncePresets, settings.debounce_ms, onUpdateSettings, onClose],
+  );
+
+  const uiFontActions: Action[] = useMemo(
+    () =>
+      uiFontOptions.map((font) => ({
+        id: `ui-font-${font.name.toLowerCase().replace(/\s+/g, "-")}`,
+        label: font.name,
+        description: font.name === currentUiFontName ? "Current" : undefined,
+        onSelect: () => {
+          onUpdateSettings({ ui_font: font.name });
+          onClose();
+        },
+      })),
+    [uiFontOptions, currentUiFontName, onUpdateSettings, onClose],
+  );
+
+  const codeFontActions: Action[] = useMemo(
+    () =>
+      codeFontOptions.map((font) => ({
+        id: `code-font-${font.name.toLowerCase().replace(/\s+/g, "-")}`,
+        label: font.name,
+        description: font.name === currentCodeFontName ? "Current" : undefined,
+        onSelect: () => {
+          onUpdateSettings({ code_font: font.name });
+          onClose();
+        },
+      })),
+    [codeFontOptions, currentCodeFontName, onUpdateSettings, onClose],
+  );
+
+  const currentActions =
+    view === "themes"
+      ? themeActions
+      : view === "compiler"
+        ? compilerActions
+        : view === "debounce"
+          ? debounceActions
+          : view === "ui-fonts"
+            ? uiFontActions
+            : view === "code-fonts"
+              ? codeFontActions
+          : mainActions;
 
   const filteredActions = useMemo(() => {
     if (!query.trim()) return currentActions;
     const q = query.toLowerCase();
     return currentActions.filter(
-      (a) =>
-        a.label.toLowerCase().includes(q) ||
-        (a.description && a.description.toLowerCase().includes(q))
+      (a) => a.label.toLowerCase().includes(q) || (a.description && a.description.toLowerCase().includes(q)),
     );
   }, [query, currentActions]);
 
@@ -157,7 +338,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
           break;
       }
     },
-    [view, onClose, filteredActions, selectedIndex]
+    [view, onClose, filteredActions, selectedIndex],
   );
 
   if (!isOpen) return null;
@@ -179,120 +360,39 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
               view === "main"
                 ? "Type a command..."
                 : view === "themes"
-                ? "Search themes..."
-                : ""
+                  ? "Search themes..."
+                : view === "compiler"
+                  ? "Select compiler..."
+                  : view === "debounce"
+                    ? "Select debounce..."
+                    : view === "ui-fonts"
+                      ? "Select UI font..."
+                      : view === "code-fonts"
+                        ? "Select code font..."
+                      : ""
             }
             style={inputStyle}
           />
         </div>
 
-        {/* Settings panel */}
-        {view === "settings" && (
-          <div style={settingsPanelStyle}>
-            <div style={settingsHeaderStyle}>Settings</div>
-
-            {/* Compiler */}
-            <div style={settingRowStyle}>
-              <label style={settingLabelStyle}>Compiler</label>
-              <select
-                value={settings.compiler}
-                onChange={(e) => onUpdateSettings({ compiler: e.target.value })}
-                style={selectStyle}
-              >
-                <option value="pdflatex">pdflatex</option>
-                <option value="xelatex">xelatex</option>
-                <option value="lualatex">lualatex</option>
-              </select>
-            </div>
-
-            {/* Auto-save */}
-            <div style={settingRowStyle}>
-              <label style={settingLabelStyle}>Auto-save</label>
-              <button
-                onClick={() => onUpdateSettings({ auto_save: !settings.auto_save })}
-                style={{
-                  ...toggleStyle,
-                  background: settings.auto_save ? "var(--success)" : "var(--bg-tertiary)",
-                }}
-              >
-                <div
-                  style={{
-                    ...toggleKnobStyle,
-                    transform: settings.auto_save ? "translateX(16px)" : "translateX(0)",
-                  }}
-                />
-              </button>
-            </div>
-
-            {/* Vim mode */}
-            <div style={settingRowStyle}>
-              <label style={settingLabelStyle}>Vim mode</label>
-              <button
-                onClick={() => onUpdateSettings({ vim_mode: !settings.vim_mode })}
-                style={{
-                  ...toggleStyle,
-                  background: settings.vim_mode ? "var(--success)" : "var(--bg-tertiary)",
-                }}
-              >
-                <div
-                  style={{
-                    ...toggleKnobStyle,
-                    transform: settings.vim_mode ? "translateX(16px)" : "translateX(0)",
-                  }}
-                />
-              </button>
-            </div>
-
-            {/* Debounce */}
-            <div style={settingRowStyle}>
-              <label style={settingLabelStyle}>
-                Debounce ({settings.debounce_ms}ms)
-              </label>
-              <input
-                type="range"
-                min={200}
-                max={3000}
-                step={100}
-                value={settings.debounce_ms}
-                onChange={(e) =>
-                  onUpdateSettings({ debounce_ms: parseInt(e.target.value, 10) })
-                }
-                style={rangeStyle}
-              />
-            </div>
-
-            <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
-              <button onClick={onClose} style={doneButtonStyle}>
-                Done
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Action list */}
-        {view !== "settings" && (
-          <div style={listStyle}>
-            {filteredActions.length === 0 && (
-              <div style={emptyStyle}>No results found</div>
-            )}
-            {filteredActions.map((action, i) => (
-              <div
-                key={action.id}
-                style={{
-                  ...itemStyle,
-                  background: i === selectedIndex ? "var(--bg-tertiary)" : "transparent",
-                }}
-                onMouseEnter={() => setSelectedIndex(i)}
-                onClick={() => action.onSelect()}
-              >
-                <div style={itemLabelStyle}>{action.label}</div>
-                {action.description && (
-                  <div style={itemDescriptionStyle}>{action.description}</div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <div style={listStyle}>
+          {filteredActions.length === 0 && <div style={emptyStyle}>No results found</div>}
+          {filteredActions.map((action, i) => (
+            <div
+              key={action.id}
+              style={{
+                ...itemStyle,
+                background: i === selectedIndex ? "var(--bg-tertiary)" : "transparent",
+              }}
+              onMouseEnter={() => setSelectedIndex(i)}
+              onClick={() => action.onSelect()}
+            >
+              <div style={itemLabelStyle}>{action.label}</div>
+              {action.description && <div style={itemDescriptionStyle}>{action.description}</div>}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -370,84 +470,6 @@ const emptyStyle: React.CSSProperties = {
   color: "var(--text-muted)",
   fontSize: "13px",
   fontFamily: "var(--font-sans)",
-};
-
-const settingsPanelStyle: React.CSSProperties = {
-  maxHeight: "400px",
-  overflowY: "auto",
-};
-
-const settingsHeaderStyle: React.CSSProperties = {
-  padding: "12px 16px 8px",
-  fontSize: "11px",
-  fontWeight: 500,
-  color: "var(--text-muted)",
-  fontFamily: "var(--font-mono)",
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-};
-
-const settingRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  padding: "10px 16px",
-  borderBottom: "1px solid var(--border)",
-};
-
-const settingLabelStyle: React.CSSProperties = {
-  color: "var(--text-primary)",
-  fontSize: "13px",
-  fontFamily: "var(--font-sans)",
-};
-
-const selectStyle: React.CSSProperties = {
-  background: "var(--bg-tertiary)",
-  border: "1px solid var(--border)",
-  borderRadius: "6px",
-  color: "var(--text-primary)",
-  fontFamily: "var(--font-mono)",
-  fontSize: "12px",
-  padding: "4px 8px",
-  outline: "none",
-  cursor: "pointer",
-};
-
-const toggleStyle: React.CSSProperties = {
-  width: "36px",
-  height: "20px",
-  borderRadius: "10px",
-  border: "none",
-  cursor: "pointer",
-  position: "relative",
-  padding: "2px",
-  transition: "background 0.2s ease",
-};
-
-const toggleKnobStyle: React.CSSProperties = {
-  width: "16px",
-  height: "16px",
-  borderRadius: "50%",
-  background: "white",
-  transition: "transform 0.2s ease",
-};
-
-const rangeStyle: React.CSSProperties = {
-  width: "140px",
-  accentColor: "var(--accent)",
-};
-
-const doneButtonStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 16px",
-  background: "var(--bg-tertiary)",
-  border: "1px solid var(--border)",
-  borderRadius: "6px",
-  color: "var(--text-primary)",
-  fontFamily: "var(--font-sans)",
-  fontSize: "13px",
-  cursor: "pointer",
-  transition: "background 0.15s ease",
 };
 
 export default CommandPalette;

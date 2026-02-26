@@ -4,12 +4,14 @@ import type { CompileResult, EulerConfig } from "../types";
 export async function compileLatex(
   content: string,
   fileStem: string,
-  compiler: string
+  compiler: string,
+  filePath?: string | null
 ): Promise<CompileResult> {
   return invoke<CompileResult>("compile_latex", {
     content,
     fileStem,
     compiler,
+    filePath: filePath ?? null,
   });
 }
 
@@ -47,4 +49,8 @@ export async function getTheme(name: string): Promise<any> {
 
 export async function saveTheme(name: string, theme: any): Promise<void> {
   return invoke<void>("save_theme", { name, theme });
+}
+
+export async function getSystemFonts(): Promise<string[]> {
+  return invoke<string[]>("get_system_fonts");
 }

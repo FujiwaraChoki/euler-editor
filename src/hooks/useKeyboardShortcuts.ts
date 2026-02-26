@@ -13,6 +13,24 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
   useEffect(() => {
     const isMac = navigator.platform.toUpperCase().includes("MAC");
 
+    function matchesKey(event: KeyboardEvent, key: string): boolean {
+      const normalizedKey = key.toLowerCase();
+
+      if (normalizedKey === "plus") {
+        return event.key === "+" || event.key === "=" || event.code === "NumpadAdd";
+      }
+
+      if (normalizedKey === "minus") {
+        return event.key === "-" || event.key === "_" || event.code === "NumpadSubtract";
+      }
+
+      if (normalizedKey === "equal" || normalizedKey === "equals") {
+        return event.key === "=" || event.key === "+";
+      }
+
+      return event.key.toLowerCase() === normalizedKey;
+    }
+
     function handleKeyDown(e: KeyboardEvent) {
       for (const [shortcut, callback] of Object.entries(shortcuts)) {
         const parts = shortcut.toLowerCase().split("+");
@@ -24,7 +42,7 @@ export function useKeyboardShortcuts(shortcuts: ShortcutMap) {
         const modPressed = isMac ? e.metaKey : e.ctrlKey;
 
         if (
-          e.key.toLowerCase() === key &&
+          matchesKey(e, key) &&
           modPressed === requiresMod &&
           e.shiftKey === requiresShift &&
           e.altKey === requiresAlt

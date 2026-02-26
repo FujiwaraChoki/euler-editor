@@ -18,6 +18,7 @@ pub async fn compile_tex(
     file_stem: &str,
     compiler: &str,
     tmp_dir: &Path,
+    working_dir: Option<&Path>,
 ) -> Result<CompileResult, EulerError> {
     // Validate compiler name
     let valid_compilers = ["pdflatex", "xelatex", "lualatex"];
@@ -32,8 +33,12 @@ pub async fn compile_tex(
     let tex_path = tmp_dir.join(format!("{}.tex", file_stem));
     tokio::fs::write(&tex_path, content).await?;
 
-    // Spawn the compiler process
+    // Spawn the compiler process.
+    // Set the working directory to the source file's directory so that
+    // relative paths (\input, \includegraphics, \bibliography, etc.) resolve correctly.
+    let cwd = working_dir.unwrap_or(tmp_dir);
     let output = Command::new(compiler)
+        .current_dir(cwd)
         .arg("-interaction=nonstopmode")
         .arg("-halt-on-error")
         .arg(format!("-output-directory={}", tmp_dir.display()))
@@ -59,12 +64,32 @@ pub async fn compile_tex(
         format!("{}\n{}", log, stderr)
     };
 
-    // Parse errors from the log (lines starting with "!")
-    let errors: Vec<String> = full_log
-        .lines()
-        .filter(|line| line.starts_with('!'))
-        .map(|line| line.to_string())
-        .collect();
+    // Parse errors from the log.
+    // LaTeX errors start with "!" but the message often continues on subsequent lines
+    // (e.g. package name continuation, detail text) until an empty line or "l.<num>" line.
+    let mut errors: Vec<String> = Vec::new();
+    let mut current_error: Option<String> = None;
+    for line in full_log.lines() {
+        if line.starts_with('!') {
+            if let Some(err) = current_error.take() {
+                errors.push(err.trim_end().to_string());
+            }
+            current_error = Some(line.to_string());
+        } else if let Some(ref mut err) = current_error {
+            // Stop collecting at empty lines, "l.<num>" references, or the next "!" line
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with("l.") {
+                errors.push(err.trim_end().to_string());
+                current_error = None;
+            } else {
+                err.push('\n');
+                err.push_str(line);
+            }
+        }
+    }
+    if let Some(err) = current_error {
+        errors.push(err.trim_end().to_string());
+    }
 
     let success = output.status.success();
 

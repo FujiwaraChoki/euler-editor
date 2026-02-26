@@ -5,6 +5,10 @@ description = "A live LaTeX editor"
 authors = ["you"]
 edition = "2021"
 
+[[bin]]
+name = "Euler"
+path = "src/main.rs"
+
 [lib]
 name = "euler_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -25,3 +29,4 @@ dirs = "6"
 thiserror = "2"
 base64 = "0.22"
 tauri-plugin-dialog = "2.6.0"
+font-kit = "0.14"

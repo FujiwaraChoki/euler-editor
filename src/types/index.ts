@@ -9,8 +9,12 @@ export interface EulerConfig {
   compiler: string;
   auto_save: boolean;
   theme: string;
+  ui_font: string;
+  code_font: string;
   debounce_ms: number;
   vim_mode: boolean;
+  relative_line_numbers: boolean;
+  show_line_numbers: boolean;
 }
 
 export interface ThemeColors {

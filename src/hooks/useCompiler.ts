@@ -7,6 +7,7 @@ interface UseCompilerOptions {
   fileStem: string;
   compiler: string;
   debounceMs: number;
+  filePath?: string | null;
 }
 
 interface UseCompilerReturn {
@@ -20,6 +21,7 @@ export function useCompiler({
   fileStem,
   compiler,
   debounceMs,
+  filePath,
 }: UseCompilerOptions): UseCompilerReturn {
   const [compileResult, setCompileResult] = useState<CompileResult | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
@@ -29,7 +31,7 @@ export function useCompiler({
   const compilationCounterRef = useRef(0);
 
   const triggerCompile = useCallback(
-    async (currentContent: string, currentFileStem: string, currentCompiler: string) => {
+    async (currentContent: string, currentFileStem: string, currentCompiler: string, currentFilePath?: string | null) => {
       compilationCounterRef.current += 1;
       const thisCompilationId = compilationCounterRef.current;
 
@@ -37,7 +39,7 @@ export function useCompiler({
       setCompilationId(thisCompilationId);
 
       try {
-        const result = await compileLatex(currentContent, currentFileStem, currentCompiler);
+        const result = await compileLatex(currentContent, currentFileStem, currentCompiler, currentFilePath);
 
         // Discard stale results: only apply if this is still the latest compilation
         if (thisCompilationId === compilationCounterRef.current) {
@@ -70,7 +72,7 @@ export function useCompiler({
     }
 
     timeoutRef.current = setTimeout(() => {
-      triggerCompile(content, fileStem, compiler);
+      triggerCompile(content, fileStem, compiler, filePath);
     }, debounceMs);
 
     return () => {
@@ -78,7 +80,7 @@ export function useCompiler({
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [content, fileStem, compiler, debounceMs, triggerCompile]);
+  }, [content, fileStem, compiler, debounceMs, filePath, triggerCompile]);
 
   return { compileResult, isCompiling, compilationId };
 }

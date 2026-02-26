@@ -1,8 +1,8 @@
 import type { Theme } from "../types";
 
 export const DEFAULT_DARK_THEME: Theme = {
-  name: "default-dark",
-  displayName: "Default Dark",
+  name: "vercel-dark",
+  displayName: "Vercel Dark",
   colors: {
     bgPrimary: "#0a0a0a",
     bgSecondary: "#111111",

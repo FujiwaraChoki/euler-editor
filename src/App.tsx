@@ -11,10 +11,17 @@ import { useCompiler } from "./hooks/useCompiler";
 import { useFileOperations } from "./hooks/useFileOperations";
 import { useCliArgs } from "./hooks/useCliArgs";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
+import { getSystemFonts } from "./lib/tauri-commands";
+import { fontCssFromName, normalizeStoredFontName } from "./styles/fonts";
 
 const App: React.FC = () => {
-  const { settings, updateSettings } = useSettings();
+  const { settings, updateSettings, isLoaded: settingsLoaded } = useSettings();
   const { themes, currentTheme, setTheme } = useTheme();
+  const [copied, setCopied] = useState(false);
+  const [editorFontSize, setEditorFontSize] = useState(14);
+  const [pdfZoom, setPdfZoom] = useState(1);
+  const [isPdfHovered, setIsPdfHovered] = useState(false);
+  const [isPdfFocused, setIsPdfFocused] = useState(false);
   const {
     filePath,
     content,
@@ -30,7 +37,24 @@ const App: React.FC = () => {
   const { initialFilePath } = useCliArgs();
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null);
+  const uiFontName = useMemo(
+    () => normalizeStoredFontName(settings.ui_font, "ui"),
+    [settings.ui_font],
+  );
+  const codeFontName = useMemo(
+    () => normalizeStoredFontName(settings.code_font, "code"),
+    [settings.code_font],
+  );
+  const uiFontFamily = useMemo(
+    () => fontCssFromName(uiFontName, "ui"),
+    [uiFontName],
+  );
+  const codeFontFamily = useMemo(
+    () => fontCssFromName(codeFontName, "code"),
+    [codeFontName],
+  );
 
   const fileStem = filePath
     ? filePath.split("/").pop()?.replace(/\.tex$/i, "") ?? "untitled"
@@ -41,6 +65,7 @@ const App: React.FC = () => {
     fileStem,
     compiler: settings.compiler,
     debounceMs: settings.debounce_ms,
+    filePath,
   });
 
   // Open file from CLI args on startup
@@ -49,6 +74,12 @@ const App: React.FC = () => {
       openFile(initialFilePath).catch(() => {});
     }
   }, [initialFilePath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply the persisted theme once settings are loaded
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    setTheme(settings.theme).catch(() => {});
+  }, [settingsLoaded, settings.theme, setTheme]);
 
   // Update document title
   useEffect(() => {
@@ -59,6 +90,22 @@ const App: React.FC = () => {
     const title = fileName === "Untitled" ? "Euler" : `Euler - ${fileName}`;
     document.title = isDirty ? `${title} (unsaved)` : title;
   }, [fileName, isDirty, hasFile]);
+
+  // Load installed system fonts for font picker search/filtering
+  useEffect(() => {
+    getSystemFonts().then((fonts) => {
+      setSystemFonts(fonts);
+    }).catch(() => {
+      // Backend unavailable (e.g., browser-only dev); fallback to built-in options.
+      setSystemFonts([]);
+    });
+  }, []);
+
+  // Apply typography from settings
+  useEffect(() => {
+    document.documentElement.style.setProperty("--font-sans", uiFontFamily);
+    document.documentElement.style.setProperty("--font-mono", codeFontFamily);
+  }, [uiFontFamily, codeFontFamily]);
 
   // Auto-save
   useEffect(() => {
@@ -71,14 +118,47 @@ const App: React.FC = () => {
   }, [settings.auto_save, isDirty, filePath, content, saveFile]);
 
   // Keyboard shortcuts
+  const changeEditorFontSize = useCallback((delta: number) => {
+    setEditorFontSize((current) => Math.max(10, Math.min(32, current + delta)));
+  }, []);
+
+  const changePdfZoom = useCallback((delta: number) => {
+    setPdfZoom((current) => {
+      const next = current + delta;
+      return Math.max(0.5, Math.min(3, Number(next.toFixed(2))));
+    });
+  }, []);
+
+  const zoomTargetIsPdf = isPdfHovered || isPdfFocused;
+
+  const increaseSize = useCallback(() => {
+    if (zoomTargetIsPdf) {
+      changePdfZoom(0.1);
+      return;
+    }
+    changeEditorFontSize(1);
+  }, [changeEditorFontSize, changePdfZoom, zoomTargetIsPdf]);
+
+  const decreaseSize = useCallback(() => {
+    if (zoomTargetIsPdf) {
+      changePdfZoom(-0.1);
+      return;
+    }
+    changeEditorFontSize(-1);
+  }, [changeEditorFontSize, changePdfZoom, zoomTargetIsPdf]);
+
   const shortcuts = useMemo(
     () => ({
       "mod+k": () => setCommandPaletteOpen(true),
       "mod+o": () => { openFileDialog().catch(() => {}); },
       "mod+s": () => { saveFile().catch(() => {}); },
       "mod+n": () => { createNewFile(); },
+      "mod+plus": increaseSize,
+      "mod+shift+plus": increaseSize,
+      "mod+equal": increaseSize,
+      "mod+minus": decreaseSize,
     }),
-    [saveFile, openFileDialog, createNewFile]
+    [saveFile, openFileDialog, createNewFile, increaseSize, decreaseSize]
   );
   useKeyboardShortcuts(shortcuts);
 
@@ -99,10 +179,9 @@ const App: React.FC = () => {
 
   const handleSetTheme = useCallback(
     (themeName: string) => {
-      setTheme(themeName);
-      updateSettings({ theme: themeName });
+      updateSettings({ theme: themeName }).catch(() => {});
     },
-    [setTheme, updateSettings]
+    [updateSettings]
   );
 
   const pdfBase64 = compileResult?.pdf_base64 ?? null;
@@ -142,6 +221,7 @@ const App: React.FC = () => {
           themes={themes}
           currentThemeName={currentTheme.name}
           onSetTheme={handleSetTheme}
+          systemFonts={systemFonts}
         />
       </div>
     );
@@ -158,6 +238,33 @@ const App: React.FC = () => {
             {fileName}
             {isDirty && <span style={dirtyStyle}>*</span>}
           </span>
+          {filePath && (
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(filePath);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              }}
+              style={copyBtnStyle}
+            >
+              <span style={copyBtnInnerStyle}>
+                <span style={{
+                  ...copyTextStyle,
+                  opacity: copied ? 0 : 1,
+                  transform: copied ? "translateY(-6px)" : "translateY(0)",
+                }}>Copy</span>
+                <span style={{
+                  ...copiedTextStyle,
+                  opacity: copied ? 1 : 0,
+                  transform: copied ? "translateY(0)" : "translateY(6px)",
+                }}>
+                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="2 6 5 9 10 3" />
+                  </svg>
+                </span>
+              </span>
+            </button>
+          )}
         </div>
         <div style={headerRightStyle}>
           <CompileIndicator
@@ -183,6 +290,11 @@ const App: React.FC = () => {
               value={content}
               onChange={handleEditorChange}
               onMount={handleEditorMount}
+              vimMode={settings.vim_mode}
+              relativeLineNumbers={settings.relative_line_numbers}
+              showLineNumbers={settings.show_line_numbers}
+              fontSize={editorFontSize}
+              codeFontFamily={codeFontFamily}
             />
           </Panel>
           <Separator style={handleStyle} />
@@ -191,6 +303,9 @@ const App: React.FC = () => {
               pdfBase64={pdfBase64}
               errors={compileErrors}
               isCompiling={isCompiling}
+              zoom={pdfZoom}
+              onHoverChange={setIsPdfHovered}
+              onFocusChange={setIsPdfFocused}
             />
           </Panel>
         </Group>
@@ -206,6 +321,7 @@ const App: React.FC = () => {
         themes={themes}
         currentThemeName={currentTheme.name}
         onSetTheme={handleSetTheme}
+        systemFonts={systemFonts}
       />
     </div>
   );
@@ -332,6 +448,48 @@ const fileNameStyle: React.CSSProperties = {
 const dirtyStyle: React.CSSProperties = {
   color: "var(--text-muted)",
   marginLeft: "2px",
+};
+
+const copyBtnStyle: React.CSSProperties = {
+  padding: "1px 2px",
+  background: "transparent",
+  border: "1px solid var(--border)",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+  fontSize: "10px",
+  lineHeight: 1,
+  overflow: "hidden",
+  transition: "border-color 0.15s",
+  display: "inline-flex",
+  alignItems: "center",
+};
+
+const copyBtnInnerStyle: React.CSSProperties = {
+  position: "relative",
+  display: "inline-block",
+  width: "38px",
+  height: "16px",
+};
+
+const copyTextStyle: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "var(--text-muted)",
+  transition: "opacity 0.2s ease, transform 0.2s ease",
+};
+
+const copiedTextStyle: React.CSSProperties = {
+  position: "absolute",
+  inset: 0,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  color: "var(--text-muted)",
+  transition: "opacity 0.2s ease, transform 0.2s ease",
 };
 
 const headerRightStyle: React.CSSProperties = {

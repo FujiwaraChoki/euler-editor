@@ -25,6 +25,7 @@ export function useTheme(): UseThemeReturn {
     loader.init().then((monaco) => {
       const monacoThemeData = createMonacoTheme(theme.colors);
       monaco.editor.defineTheme(EULER_MONACO_THEME, monacoThemeData);
+      monaco.editor.setTheme(EULER_MONACO_THEME);
     }).catch(() => {
       // Monaco not yet available, will be set on editor mount
     });
