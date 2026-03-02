@@ -5,11 +5,11 @@ import type { FileTreeNode } from "../types";
 async function loadChildren(dirPath: string): Promise<FileTreeNode[]> {
   const entries = await readDir(dirPath);
   const nodes: FileTreeNode[] = entries
-    .filter((e) => !e.name.startsWith("."))
+    .filter((e) => typeof e.name === "string" && !e.name.startsWith("."))
     .map((e) => ({
-      name: e.name,
-      path: `${dirPath}/${e.name}`,
-      isDirectory: e.isDirectory,
+      name: e.name as string,
+      path: `${dirPath}/${e.name as string}`,
+      isDirectory: Boolean(e.isDirectory),
       children: e.isDirectory ? null : [],
       isExpanded: false,
     }));
@@ -40,13 +40,28 @@ function updateNodeInTree(
   });
 }
 
-function insertSorted(nodes: FileTreeNode[], newNode: FileTreeNode): FileTreeNode[] {
-  const result = [...nodes, newNode];
-  result.sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
-    return a.name.localeCompare(b.name);
+function mergeChildrenPreservingState(
+  previousChildren: FileTreeNode[] | null,
+  nextChildren: FileTreeNode[],
+): FileTreeNode[] {
+  if (!previousChildren || previousChildren.length === 0) {
+    return nextChildren;
+  }
+
+  const previousByPath = new Map(previousChildren.map((node) => [node.path, node]));
+
+  return nextChildren.map((nextNode) => {
+    const previousNode = previousByPath.get(nextNode.path);
+    if (!previousNode || !nextNode.isDirectory) {
+      return nextNode;
+    }
+
+    return {
+      ...nextNode,
+      isExpanded: previousNode.isExpanded,
+      children: previousNode.children,
+    };
   });
-  return result;
 }
 
 function removeNodeFromTree(nodes: FileTreeNode[], targetPath: string): FileTreeNode[] {
@@ -99,6 +114,21 @@ export function useFileTree(rootPath: string | null): UseFileTreeReturn {
     };
   }, [rootPath]);
 
+  const refreshDirectory = useCallback(async (dirPath: string, forceExpand: boolean): Promise<void> => {
+    const refreshedChildren = await loadChildren(dirPath);
+    setNodes((prev) => {
+      if (dirPath === currentRootPath.current) {
+        return refreshedChildren;
+      }
+
+      return updateNodeInTree(prev, dirPath, (node) => ({
+        ...node,
+        children: mergeChildrenPreservingState(node.children, refreshedChildren),
+        isExpanded: forceExpand ? true : node.isExpanded,
+      }));
+    });
+  }, []);
+
   const toggleExpand = useCallback((path: string) => {
     setNodes((prev) =>
       updateNodeInTree(prev, path, (node) => {
@@ -109,19 +139,14 @@ export function useFileTree(rootPath: string | null): UseFileTreeReturn {
           return { ...node, isExpanded: false };
         }
 
-        // Expanding – children already loaded
-        if (node.children !== null && node.children.length > 0) {
-          return { ...node, isExpanded: true };
-        }
-
-        // Expanding – need to load children
+        // Expanding – refresh from disk so new files are always detected
         loadChildren(path)
           .then((children) => {
             setNodes((current) =>
               updateNodeInTree(current, path, (n) => ({
                 ...n,
-                children,
-                isExpanded: true,
+                children: mergeChildrenPreservingState(n.children, children),
+                isExpanded: n.isExpanded,
               })),
             );
           })
@@ -129,13 +154,12 @@ export function useFileTree(rootPath: string | null): UseFileTreeReturn {
             setNodes((current) =>
               updateNodeInTree(current, path, (n) => ({
                 ...n,
-                children: [],
-                isExpanded: true,
+                isExpanded: n.isExpanded,
               })),
             );
           });
 
-        return { ...node, isExpanded: false };
+        return { ...node, isExpanded: true, children: node.children ?? [] };
       }),
     );
   }, []);
@@ -143,98 +167,37 @@ export function useFileTree(rootPath: string | null): UseFileTreeReturn {
   const createFile = useCallback(async (parentDir: string, name: string): Promise<string> => {
     const filePath = `${parentDir}/${name}`;
     await writeTextFile(filePath, "");
-
-    const newNode: FileTreeNode = {
-      name,
-      path: filePath,
-      isDirectory: false,
-      children: [],
-      isExpanded: false,
-    };
-
-    // Insert into tree
-    if (parentDir === currentRootPath.current) {
-      setNodes((prev) => insertSorted(prev, newNode));
-    } else {
-      setNodes((prev) =>
-        updateNodeInTree(prev, parentDir, (node) => ({
-          ...node,
-          children: insertSorted(node.children ?? [], newNode),
-          isExpanded: true,
-        })),
-      );
-    }
+    await refreshDirectory(parentDir, true);
 
     return filePath;
-  }, []);
+  }, [refreshDirectory]);
 
   const createFolder = useCallback(async (parentDir: string, name: string): Promise<void> => {
     const dirPath = `${parentDir}/${name}`;
     await mkdir(dirPath);
-
-    const newNode: FileTreeNode = {
-      name,
-      path: dirPath,
-      isDirectory: true,
-      children: null,
-      isExpanded: false,
-    };
-
-    if (parentDir === currentRootPath.current) {
-      setNodes((prev) => insertSorted(prev, newNode));
-    } else {
-      setNodes((prev) =>
-        updateNodeInTree(prev, parentDir, (node) => ({
-          ...node,
-          children: insertSorted(node.children ?? [], newNode),
-          isExpanded: true,
-        })),
-      );
-    }
-  }, []);
+    await refreshDirectory(parentDir, true);
+  }, [refreshDirectory]);
 
   const renameNode = useCallback(async (oldPath: string, newName: string): Promise<string> => {
     const parentDir = oldPath.split("/").slice(0, -1).join("/");
     const newPath = `${parentDir}/${newName}`;
     await rename(oldPath, newPath);
 
-    // Update in tree: remove old, insert renamed
-    setNodes((prev) => {
-      // Find the node to get its properties
-      let found: FileTreeNode | null = null;
-      const findNode = (nodes: FileTreeNode[]): void => {
-        for (const n of nodes) {
-          if (n.path === oldPath) { found = n; return; }
-          if (n.children) findNode(n.children);
-        }
-      };
-      findNode(prev);
-      if (!found) return prev;
-
-      const renamedNode: FileTreeNode = {
-        ...(found as FileTreeNode),
-        name: newName,
-        path: newPath,
-      };
-
-      const withoutOld = removeNodeFromTree(prev, oldPath);
-
-      if (parentDir === currentRootPath.current) {
-        return insertSorted(withoutOld, renamedNode);
-      }
-      return updateNodeInTree(withoutOld, parentDir, (node) => ({
-        ...node,
-        children: insertSorted(node.children ?? [], renamedNode),
-      }));
-    });
+    await refreshDirectory(parentDir, true);
 
     return newPath;
-  }, []);
+  }, [refreshDirectory]);
 
   const deleteNode = useCallback(async (path: string, isDirectory: boolean): Promise<void> => {
     await remove(path, { recursive: isDirectory });
-    setNodes((prev) => removeNodeFromTree(prev, path));
-  }, []);
+    const parentDir = path.split("/").slice(0, -1).join("/");
+
+    try {
+      await refreshDirectory(parentDir, false);
+    } catch {
+      setNodes((prev) => removeNodeFromTree(prev, path));
+    }
+  }, [refreshDirectory]);
 
   return { nodes, rootPath: currentRootPath.current, toggleExpand, rootName, createFile, createFolder, renameNode, deleteNode };
 }
