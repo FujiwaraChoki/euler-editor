@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CompileResult, EulerConfig } from "../types";
+import type { CodexServerStatus, CompileResult, EulerConfig } from "../types";
 
 export async function compileLatex(
   content: string,
@@ -57,4 +57,16 @@ export async function getSystemFonts(): Promise<string[]> {
 
 export async function installCli(): Promise<string> {
   return invoke<string>("install_cli");
+}
+
+export async function getCodexServerStatus(): Promise<CodexServerStatus> {
+  return invoke<CodexServerStatus>("get_codex_server_status");
+}
+
+export async function startCodexServer(directory: string, port: number): Promise<CodexServerStatus> {
+  return invoke<CodexServerStatus>("start_codex_server", { directory, port });
+}
+
+export async function stopCodexServer(): Promise<CodexServerStatus> {
+  return invoke<CodexServerStatus>("stop_codex_server");
 }

@@ -35,6 +35,7 @@
 - 6 built-in themes (Vercel Dark/Light, Catppuccin Latte/Frappe/Macchiato/Mocha).
 - Multi-page PDF navigation with zoom controls.
 - Optional Vim mode and relative/toggleable line numbers.
+- Built-in Codex app-server controls (start/stop + port) scoped to the open file directory.
 
 ## Download
 
@@ -100,6 +101,14 @@ Keyboard shortcuts:
 | `Cmd/Ctrl + N` | New document |
 | `Cmd/Ctrl + Plus` | Zoom in (editor or PDF, context-aware) |
 | `Cmd/Ctrl + Minus` | Zoom out (editor or PDF, context-aware) |
+
+Codex app-server integration:
+
+- Open a file inside the folder you want Codex to work in.
+- In the header, set the port and click `Start` in the `Codex` controls.
+- Euler starts `codex app-server --listen ws://127.0.0.1:<port>` with that folder as the working directory.
+- A minimal `Codex Chat` panel appears; send prompts there to have Codex edit files in that folder.
+- Click `Stop` to terminate it.
 
 ## Configuration
 

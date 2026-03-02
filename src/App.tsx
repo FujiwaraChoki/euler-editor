@@ -1,12 +1,14 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Group, Panel, Separator, type PanelImperativeHandle } from "react-resizable-panels";
 import type { editor as monacoEditor } from "monaco-editor";
+import type { CodexServerStatus } from "./types";
 import Editor from "./components/Editor";
 import PdfPreview from "./components/PdfPreview";
 import CompileIndicator from "./components/CompileIndicator";
 import CommandPalette from "./components/CommandPalette";
 import QuickOpen from "./components/QuickOpen";
 import FileTree from "./components/FileTree";
+import CodexChat from "./components/CodexChat";
 import { useSettings } from "./hooks/useSettings";
 import { useTheme } from "./hooks/useTheme";
 import { useCompiler } from "./hooks/useCompiler";
@@ -14,8 +16,26 @@ import { useFileOperations } from "./hooks/useFileOperations";
 import { useFileTree } from "./hooks/useFileTree";
 import { useCliArgs } from "./hooks/useCliArgs";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
-import { getSystemFonts } from "./lib/tauri-commands";
+import {
+  getCodexServerStatus,
+  getSystemFonts,
+  startCodexServer,
+  stopCodexServer,
+} from "./lib/tauri-commands";
 import { fontCssFromName, normalizeStoredFontName } from "./styles/fonts";
+
+const normalizePath = (path: string): string => {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/, "");
+};
+
+const isAbsolutePath = (path: string): boolean => {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+};
+
+const resolvePathFromBase = (basePath: string | null, path: string): string => {
+  if (isAbsolutePath(path) || !basePath) return normalizePath(path);
+  return normalizePath(`${basePath.replace(/\/$/, "")}/${path}`);
+};
 
 const App: React.FC = () => {
   const { settings, updateSettings, isLoaded: settingsLoaded } = useSettings();
@@ -42,6 +62,16 @@ const App: React.FC = () => {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
+  const [codexStatus, setCodexStatus] = useState<CodexServerStatus>({
+    running: false,
+    directory: null,
+    listen_url: null,
+  });
+  const [codexBusy, setCodexBusy] = useState(false);
+  const [codexMessage, setCodexMessage] = useState<string | null>(null);
+  const [codexPort, setCodexPort] = useState(4317);
+  const [codexChatVisible, setCodexChatVisible] = useState(false);
+  const codexStatusRequestSeq = useRef(0);
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null);
   const uiFontName = useMemo(
     () => normalizeStoredFontName(settings.ui_font, "ui"),
@@ -80,6 +110,8 @@ const App: React.FC = () => {
     deleteNode: fileTreeDeleteNode,
   } = useFileTree(sidebarRootPath);
 
+  const codexWorkingDirectory = codexStatus.directory ?? sidebarRootPath;
+
   const toggleSidebar = useCallback(() => {
     const panel = sidebarPanelRef.current;
     if (!panel) return;
@@ -110,6 +142,79 @@ const App: React.FC = () => {
     },
     [openFile],
   );
+
+  const handleCodexFilesChanged = useCallback(
+    (changedPaths: string[]) => {
+      if (!filePath || isDirty) return;
+
+      const currentPath = normalizePath(filePath);
+      const fileUpdated = changedPaths.some((changedPath) => {
+        const normalizedChanged = normalizePath(changedPath);
+        const resolvedChanged = resolvePathFromBase(codexWorkingDirectory, changedPath);
+        return resolvedChanged === currentPath || currentPath.endsWith(`/${normalizedChanged}`);
+      });
+
+      if (fileUpdated) {
+        openFile(filePath).catch(() => {});
+      }
+    },
+    [codexWorkingDirectory, filePath, isDirty, openFile],
+  );
+
+  const refreshCodexStatus = useCallback(() => {
+    const requestSeq = codexStatusRequestSeq.current + 1;
+    codexStatusRequestSeq.current = requestSeq;
+
+    getCodexServerStatus()
+      .then((status) => {
+        if (codexStatusRequestSeq.current !== requestSeq) return;
+        setCodexStatus(status);
+        if (status.running) {
+          setCodexChatVisible(true);
+        }
+      })
+      .catch(() => {
+        // Keep last known status on transient invoke failures to avoid UI flapping.
+      });
+  }, []);
+
+  const handleStartCodexServer = useCallback(() => {
+    if (!sidebarRootPath || codexBusy) return;
+    codexStatusRequestSeq.current += 1;
+    setCodexBusy(true);
+    setCodexMessage(null);
+    startCodexServer(sidebarRootPath, codexPort)
+      .then((status) => {
+        setCodexStatus(status);
+        if (status.running) {
+          setCodexChatVisible(true);
+        }
+      })
+      .catch((error) => {
+        setCodexMessage(String(error));
+      })
+      .finally(() => {
+        setCodexBusy(false);
+      });
+  }, [sidebarRootPath, codexBusy, codexPort]);
+
+  const handleStopCodexServer = useCallback(() => {
+    if (codexBusy) return;
+    codexStatusRequestSeq.current += 1;
+    setCodexBusy(true);
+    setCodexMessage(null);
+    stopCodexServer()
+      .then((status) => {
+        setCodexStatus(status);
+        setCodexChatVisible(false);
+      })
+      .catch((error) => {
+        setCodexMessage(String(error));
+      })
+      .finally(() => {
+        setCodexBusy(false);
+      });
+  }, [codexBusy]);
 
   const fileStem = filePath
     ? filePath.split("/").pop()?.replace(/\.tex$/i, "") ?? "untitled"
@@ -157,6 +262,24 @@ const App: React.FC = () => {
       setSystemFonts([]);
     });
   }, []);
+
+  useEffect(() => {
+    refreshCodexStatus();
+  }, [refreshCodexStatus]);
+
+  useEffect(() => {
+    if (!codexStatus.running) {
+      setCodexMessage(null);
+      return;
+    }
+
+    if (sidebarRootPath && codexStatus.directory && sidebarRootPath !== codexStatus.directory) {
+      setCodexMessage("Codex server is running for another folder. Stop and start to switch.");
+      return;
+    }
+
+    setCodexMessage(null);
+  }, [sidebarRootPath, codexStatus.running, codexStatus.directory]);
 
   // Apply typography from settings
   useEffect(() => {
@@ -334,6 +457,32 @@ const App: React.FC = () => {
           )}
         </div>
         <div style={headerRightStyle}>
+          <div style={codexControlsStyle}>
+            <span style={codexLabelStyle}>Codex</span>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={codexPort}
+              onChange={(event) => {
+                const parsed = Number.parseInt(event.target.value, 10);
+                if (Number.isFinite(parsed)) {
+                  setCodexPort(Math.max(1, Math.min(65535, parsed)));
+                }
+              }}
+              style={codexPortInputStyle}
+              disabled={codexStatus.running || codexBusy}
+              title="Codex app-server port"
+            />
+            <button
+              onClick={codexStatus.running ? handleStopCodexServer : handleStartCodexServer}
+              disabled={codexBusy || (!codexStatus.running && !sidebarRootPath)}
+              style={codexButtonStyle(codexStatus.running, codexBusy)}
+              title={codexStatus.running ? "Stop Codex app-server" : "Start Codex app-server"}
+            >
+              {codexBusy ? "Working..." : codexStatus.running ? "Stop" : "Start"}
+            </button>
+          </div>
           <CompileIndicator
             isCompiling={isCompiling}
             errors={compileErrors}
@@ -348,6 +497,26 @@ const App: React.FC = () => {
           </button>
         </div>
       </header>
+      {(codexStatus.running || codexMessage || codexChatVisible) && (
+        <div style={codexStatusBarStyle}>
+          {codexStatus.running && codexStatus.listen_url && (
+            <span style={codexStatusTextStyle}>Codex app-server: {codexStatus.listen_url}</span>
+          )}
+          {!codexStatus.running && codexChatVisible && (
+            <span style={codexStatusTextStyle}>Codex app-server: not running</span>
+          )}
+          {codexMessage && <span style={codexStatusErrorStyle}>{codexMessage}</span>}
+        </div>
+      )}
+      {codexChatVisible && (
+        <div style={codexChatContainerStyle}>
+          <CodexChat
+            serverUrl={codexStatus.listen_url}
+            workingDirectory={codexWorkingDirectory}
+            onFilesChanged={handleCodexFilesChanged}
+          />
+        </div>
+      )}
 
       {/* Sidebar + Editor + Preview */}
       <div style={mainStyle}>
@@ -599,6 +768,65 @@ const headerRightStyle: React.CSSProperties = {
   gap: "12px",
 };
 
+const codexControlsStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "6px",
+};
+
+const codexLabelStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "11px",
+  color: "var(--text-muted)",
+};
+
+const codexPortInputStyle: React.CSSProperties = {
+  width: "70px",
+  height: "24px",
+  background: "var(--bg-tertiary)",
+  border: "1px solid var(--border)",
+  borderRadius: "6px",
+  color: "var(--text-secondary)",
+  padding: "0 8px",
+  fontFamily: "var(--font-mono)",
+  fontSize: "11px",
+};
+
+const codexButtonStyle = (running: boolean, disabled: boolean): React.CSSProperties => ({
+  height: "24px",
+  padding: "0 10px",
+  background: running ? "rgba(255, 99, 105, 0.12)" : "var(--bg-tertiary)",
+  border: "1px solid var(--border)",
+  borderRadius: "6px",
+  color: running ? "var(--error)" : "var(--text-secondary)",
+  cursor: disabled ? "not-allowed" : "pointer",
+  opacity: disabled ? 0.6 : 1,
+  fontFamily: "var(--font-mono)",
+  fontSize: "11px",
+});
+
+const codexStatusBarStyle: React.CSSProperties = {
+  minHeight: "28px",
+  display: "flex",
+  alignItems: "center",
+  gap: "12px",
+  padding: "0 16px",
+  borderBottom: "1px solid var(--border)",
+  background: "var(--bg-secondary)",
+};
+
+const codexStatusTextStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "11px",
+  color: "var(--text-secondary)",
+};
+
+const codexStatusErrorStyle: React.CSSProperties = {
+  fontFamily: "var(--font-sans)",
+  fontSize: "12px",
+  color: "var(--warning)",
+};
+
 const cmdBtnStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -616,6 +844,12 @@ const cmdBtnStyle: React.CSSProperties = {
 const mainStyle: React.CSSProperties = {
   flex: 1,
   overflow: "hidden",
+};
+
+const codexChatContainerStyle: React.CSSProperties = {
+  height: "220px",
+  minHeight: "220px",
+  borderBottom: "1px solid var(--border)",
 };
 
 const handleStyle: React.CSSProperties = {

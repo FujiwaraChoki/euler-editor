@@ -5,6 +5,9 @@ mod error;
 
 use commands::cli::install_cli;
 use commands::compile::compile_latex;
+use commands::codex_server::{
+    get_codex_server_status, start_codex_server, stop_codex_server, CodexServerState,
+};
 use commands::file_ops::{create_file, file_exists, read_file, write_file};
 use commands::fonts::get_system_fonts;
 use commands::settings::{get_settings, save_settings};
@@ -18,6 +21,7 @@ use config::EulerConfig;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(CodexServerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_cli::init())
         .plugin(tauri_plugin_fs::init())
@@ -35,6 +39,9 @@ pub fn run() {
             get_theme,
             save_theme,
             install_cli,
+            get_codex_server_status,
+            start_codex_server,
+            stop_codex_server,
         ])
         .setup(|_app| {
             let home = dirs::home_dir().expect("Could not determine home directory");

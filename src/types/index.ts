@@ -27,6 +27,12 @@ export interface FileTreeNode {
   isExpanded: boolean;
 }
 
+export interface CodexServerStatus {
+  running: boolean;
+  directory: string | null;
+  listen_url: string | null;
+}
+
 export interface ThemeColors {
   bgPrimary: string;
   bgSecondary: string;
