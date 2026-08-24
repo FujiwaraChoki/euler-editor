@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type { EulerConfig } from "../types";
 import { getSettings, saveSettings } from "../lib/tauri-commands";
 import { DEFAULT_CODE_FONT, DEFAULT_UI_FONT, normalizeStoredFontName } from "../styles/fonts";
@@ -26,6 +26,11 @@ interface UseSettingsReturn {
 export function useSettings(): UseSettingsReturn {
   const [settings, setSettings] = useState<EulerConfig>(DEFAULT_SETTINGS);
   const [isLoaded, setIsLoaded] = useState(false);
+  const settingsRef = useRef(settings);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
   useEffect(() => {
     let cancelled = false;
@@ -40,6 +45,7 @@ export function useSettings(): UseSettingsReturn {
             ui_font: normalizeStoredFontName(loaded.ui_font, "ui"),
             code_font: normalizeStoredFontName(loaded.code_font, "code"),
           };
+          settingsRef.current = merged;
           setSettings(merged);
           setIsLoaded(true);
 
@@ -66,11 +72,12 @@ export function useSettings(): UseSettingsReturn {
   const updateSettings = useCallback(
     async (partial: Partial<EulerConfig>) => {
       const merged: EulerConfig = {
-        ...settings,
+        ...settingsRef.current,
         ...partial,
-        ui_font: normalizeStoredFontName((partial.ui_font ?? settings.ui_font), "ui"),
-        code_font: normalizeStoredFontName((partial.code_font ?? settings.code_font), "code"),
+        ui_font: normalizeStoredFontName((partial.ui_font ?? settingsRef.current.ui_font), "ui"),
+        code_font: normalizeStoredFontName((partial.code_font ?? settingsRef.current.code_font), "code"),
       };
+      settingsRef.current = merged;
       setSettings(merged);
 
       try {
@@ -79,7 +86,7 @@ export function useSettings(): UseSettingsReturn {
         // Silently fail if backend is unavailable
       }
     },
-    [settings]
+    []
   );
 
   return { settings, updateSettings, isLoaded };

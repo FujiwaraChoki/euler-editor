@@ -3,8 +3,9 @@ mod compiler;
 mod config;
 mod error;
 
-use commands::cli::install_cli;
+use commands::cli::{get_cli_status, install_cli};
 use commands::compile::compile_latex;
+use commands::codex::{apply_codex_edit, get_codex_status};
 use commands::file_ops::{create_file, file_exists, read_file, write_file};
 use commands::fonts::get_system_fonts;
 use commands::settings::{get_settings, save_settings};
@@ -34,6 +35,9 @@ pub fn run() {
             get_themes,
             get_theme,
             save_theme,
+            get_codex_status,
+            apply_codex_edit,
+            get_cli_status,
             install_cli,
         ])
         .setup(|_app| {

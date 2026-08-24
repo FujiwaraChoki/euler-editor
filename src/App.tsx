@@ -5,22 +5,51 @@ import Editor from "./components/Editor";
 import PdfPreview from "./components/PdfPreview";
 import CompileIndicator from "./components/CompileIndicator";
 import CommandPalette from "./components/CommandPalette";
+import CodexPanel from "./components/CodexPanel";
 import QuickOpen from "./components/QuickOpen";
 import FileTree from "./components/FileTree";
+import { useCodex } from "./hooks/useCodex";
 import { useSettings } from "./hooks/useSettings";
 import { useTheme } from "./hooks/useTheme";
 import { useCompiler } from "./hooks/useCompiler";
 import { useFileOperations } from "./hooks/useFileOperations";
 import { useFileTree } from "./hooks/useFileTree";
 import { useCliArgs } from "./hooks/useCliArgs";
+import { useCliIntegration } from "./hooks/useCliIntegration";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { getSystemFonts } from "./lib/tauri-commands";
 import { fontCssFromName, normalizeStoredFontName } from "./styles/fonts";
 
+type FlashTone = "success" | "error" | "info";
+
+interface FlashMessage {
+  tone: FlashTone;
+  title: string;
+  detail: string;
+}
+
 const App: React.FC = () => {
   const { settings, updateSettings, isLoaded: settingsLoaded } = useSettings();
   const { themes, currentTheme, setTheme } = useTheme();
+  const {
+    status: codexStatus,
+    isLoadingStatus: isCodexStatusLoading,
+    isApplying: isApplyingCodex,
+    refreshStatus: refreshCodexStatus,
+    runEdit: runCodexEdit,
+  } = useCodex();
+  const {
+    status: cliStatus,
+    isLoading: isCliStatusLoading,
+    isInstalling: isInstallingCli,
+    refresh: refreshCliIntegration,
+    install: installCliIntegration,
+  } = useCliIntegration();
   const [copied, setCopied] = useState(false);
+  const [codexPanelOpen, setCodexPanelOpen] = useState(false);
+  const [codexLastMessage, setCodexLastMessage] = useState<string | null>(null);
+  const [codexLastError, setCodexLastError] = useState<string | null>(null);
+  const [flashMessage, setFlashMessage] = useState<FlashMessage | null>(null);
   const [editorFontSize, setEditorFontSize] = useState(14);
   const [pdfZoom, setPdfZoom] = useState(1);
   const [isPdfHovered, setIsPdfHovered] = useState(false);
@@ -40,6 +69,7 @@ const App: React.FC = () => {
   const { initialFilePath } = useCliArgs();
 
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commandPaletteInitialView, setCommandPaletteInitialView] = useState<"main" | "cli">("main");
   const [quickOpenOpen, setQuickOpenOpen] = useState(false);
   const [systemFonts, setSystemFonts] = useState<string[]>([]);
   const editorRef = useRef<monacoEditor.IStandaloneCodeEditor | null>(null);
@@ -164,6 +194,24 @@ const App: React.FC = () => {
     document.documentElement.style.setProperty("--font-mono", codeFontFamily);
   }, [uiFontFamily, codeFontFamily]);
 
+  useEffect(() => {
+    if (!codexPanelOpen) return;
+    refreshCodexStatus().catch(() => {});
+  }, [codexPanelOpen, refreshCodexStatus]);
+
+  useEffect(() => {
+    if (!commandPaletteOpen && hasFile) return;
+    refreshCliIntegration().catch(() => {});
+  }, [commandPaletteOpen, hasFile, refreshCliIntegration]);
+
+  useEffect(() => {
+    if (!flashMessage) return;
+    const timeout = setTimeout(() => {
+      setFlashMessage(null);
+    }, 4000);
+    return () => clearTimeout(timeout);
+  }, [flashMessage]);
+
   // Auto-save
   useEffect(() => {
     if (settings.auto_save && isDirty && filePath) {
@@ -204,10 +252,20 @@ const App: React.FC = () => {
     changeEditorFontSize(-1);
   }, [changeEditorFontSize, changePdfZoom, zoomTargetIsPdf]);
 
+  const toggleCodexPanel = useCallback(() => {
+    setCodexPanelOpen((current) => !current);
+  }, []);
+
+  const openCommandPaletteMain = useCallback(() => {
+    setQuickOpenOpen(false);
+    setCommandPaletteInitialView("main");
+    setCommandPaletteOpen(true);
+  }, []);
+
   const shortcuts = useMemo(
     () => ({
-      "mod+k": () => { setQuickOpenOpen(false); setCommandPaletteOpen(true); },
-      "mod+,": () => { setQuickOpenOpen(false); setCommandPaletteOpen(true); },
+      "mod+k": openCommandPaletteMain,
+      "mod+,": openCommandPaletteMain,
       "mod+p": () => { setCommandPaletteOpen(false); setQuickOpenOpen(true); },
       "mod+o": () => { openFileDialog().catch(() => {}); },
       "mod+s": () => { saveFile().catch(() => {}); },
@@ -217,8 +275,9 @@ const App: React.FC = () => {
       "mod+equal": increaseSize,
       "mod+minus": decreaseSize,
       "mod+b": toggleSidebar,
+      "mod+j": toggleCodexPanel,
     }),
-    [saveFile, openFileDialog, createNewFile, increaseSize, decreaseSize, toggleSidebar]
+    [saveFile, openFileDialog, createNewFile, increaseSize, decreaseSize, toggleSidebar, openCommandPaletteMain, toggleCodexPanel]
   );
   useKeyboardShortcuts(shortcuts);
 
@@ -243,6 +302,57 @@ const App: React.FC = () => {
     },
     [updateSettings]
   );
+  const showFlash = useCallback((tone: FlashTone, title: string, detail: string) => {
+    setFlashMessage({ tone, title, detail });
+  }, []);
+  const handleInstallCli = useCallback(async () => {
+    try {
+      const previousStatus = cliStatus;
+      const nextStatus = await installCliIntegration();
+      showFlash(
+        "success",
+        previousStatus?.installed ? "CLI helper refreshed" : "CLI helper installed",
+        `Euler is ready at ${nextStatus.installPath}.`,
+      );
+    } catch (error) {
+      showFlash("error", "CLI helper install failed", String(error));
+    }
+  }, [cliStatus, installCliIntegration, showFlash]);
+  const handleCopyCliCommand = useCallback(async () => {
+    if (!filePath) return;
+    try {
+      await navigator.clipboard.writeText(`euler "${filePath}"`);
+      showFlash("info", "Launch command copied", `Run euler "${filePath}" from Codex or a terminal.`);
+    } catch {
+      showFlash("error", "Could not copy command", "Clipboard access is unavailable right now.");
+    }
+  }, [filePath, showFlash]);
+  const handleCodexSubmit = useCallback(async (prompt: string) => {
+    if (!filePath) {
+      const detail = "Open a saved LaTeX file before asking Codex to edit it.";
+      setCodexLastError(detail);
+      showFlash("error", "Codex needs a saved file", detail);
+      return;
+    }
+
+    setCodexLastError(null);
+
+    try {
+      if (isDirty) {
+        await saveFile();
+      }
+
+      const result = await runCodexEdit(prompt, filePath);
+      await openFile(filePath);
+      setCodexLastMessage(result.assistantMessage || "Codex updated the file.");
+      showFlash("success", "Codex updated the file", result.assistantMessage || "The latest edits have been loaded into Euler.");
+    } catch (error) {
+      const detail = String(error);
+      setCodexLastError(detail);
+      showFlash("error", "Codex edit failed", detail);
+      throw error;
+    }
+  }, [filePath, isDirty, openFile, runCodexEdit, saveFile, showFlash]);
 
   const pdfBase64 = compileResult?.pdf_base64 ?? null;
   const compileErrors = compileResult?.errors ?? [];
@@ -276,12 +386,23 @@ const App: React.FC = () => {
           onClose={() => setCommandPaletteOpen(false)}
           onNewDocument={createNewFile}
           onOpenDocument={() => openFileDialog().catch(() => {})}
+          onOpenCodexAssistant={() => {
+            setCommandPaletteOpen(false);
+            showFlash("info", "Open a file first", "Codex can edit a saved LaTeX file once one is open in Euler.");
+          }}
           settings={settings}
           onUpdateSettings={updateSettings}
           themes={themes}
           currentThemeName={currentTheme.name}
           onSetTheme={handleSetTheme}
           systemFonts={systemFonts}
+          initialView={commandPaletteInitialView}
+          cliStatus={cliStatus}
+          isCliStatusLoading={isCliStatusLoading}
+          isInstallingCli={isInstallingCli}
+          onInstallCli={handleInstallCli}
+          onCopyCliCommand={handleCopyCliCommand}
+          currentFilePath={filePath}
         />
         <QuickOpen
           isOpen={quickOpenOpen}
@@ -290,6 +411,23 @@ const App: React.FC = () => {
           onOpenFile={(path) => openFile(path).catch(() => {})}
           currentFilePath={filePath}
         />
+        {flashMessage && (
+          <div style={flashContainerStyle}>
+            <div
+              style={{
+                ...flashCardStyle,
+                ...(flashMessage.tone === "success"
+                  ? flashCardSuccessStyle
+                  : flashMessage.tone === "error"
+                    ? flashCardErrorStyle
+                    : flashCardInfoStyle),
+              }}
+            >
+              <div style={flashTitleStyle}>{flashMessage.title}</div>
+              <div style={flashDetailStyle}>{flashMessage.detail}</div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -340,7 +478,17 @@ const App: React.FC = () => {
             success={compileSuccess}
           />
           <button
-            onClick={() => setCommandPaletteOpen(true)}
+            onClick={toggleCodexPanel}
+            style={{
+              ...codexBtnStyle,
+              ...(codexPanelOpen ? codexBtnActiveStyle : {}),
+            }}
+            title="Codex Assistant (Cmd+J)"
+          >
+            Codex
+          </button>
+          <button
+            onClick={openCommandPaletteMain}
             style={cmdBtnStyle}
             title="Command Palette (Cmd+K)"
           >
@@ -410,12 +558,20 @@ const App: React.FC = () => {
         onClose={() => setCommandPaletteOpen(false)}
         onNewDocument={createNewFile}
         onOpenDocument={() => openFileDialog().catch(() => {})}
+        onOpenCodexAssistant={() => setCodexPanelOpen(true)}
         settings={settings}
         onUpdateSettings={updateSettings}
         themes={themes}
         currentThemeName={currentTheme.name}
         onSetTheme={handleSetTheme}
         systemFonts={systemFonts}
+        initialView={commandPaletteInitialView}
+        cliStatus={cliStatus}
+        isCliStatusLoading={isCliStatusLoading}
+        isInstallingCli={isInstallingCli}
+        onInstallCli={handleInstallCli}
+        onCopyCliCommand={handleCopyCliCommand}
+        currentFilePath={filePath}
       />
       <QuickOpen
         isOpen={quickOpenOpen}
@@ -424,6 +580,35 @@ const App: React.FC = () => {
         onOpenFile={(path) => openFile(path).catch(() => {})}
         currentFilePath={filePath}
       />
+      <CodexPanel
+        isOpen={codexPanelOpen}
+        onClose={() => setCodexPanelOpen(false)}
+        onSubmit={handleCodexSubmit}
+        status={codexStatus}
+        isLoadingStatus={isCodexStatusLoading}
+        isRunning={isApplyingCodex}
+        currentFilePath={filePath}
+        isDirty={isDirty}
+        lastMessage={codexLastMessage}
+        lastError={codexLastError}
+      />
+      {flashMessage && (
+        <div style={flashContainerStyle}>
+          <div
+            style={{
+              ...flashCardStyle,
+              ...(flashMessage.tone === "success"
+                ? flashCardSuccessStyle
+                : flashMessage.tone === "error"
+                  ? flashCardErrorStyle
+                  : flashCardInfoStyle),
+            }}
+          >
+            <div style={flashTitleStyle}>{flashMessage.title}</div>
+            <div style={flashDetailStyle}>{flashMessage.detail}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -441,13 +626,18 @@ const welcomeContainer: React.CSSProperties = {
   alignItems: "center",
   justifyContent: "center",
   background: "var(--bg-primary)",
+  position: "relative",
+  overflow: "hidden",
 };
 
 const welcomeContent: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   alignItems: "center",
-  gap: "24px",
+  gap: "20px",
+  padding: "32px",
+  position: "relative",
+  zIndex: 1,
 };
 
 const welcomeTitle: React.CSSProperties = {
@@ -469,7 +659,6 @@ const welcomeActions: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: "6px",
-  marginTop: "8px",
   width: "200px",
 };
 
@@ -599,6 +788,29 @@ const headerRightStyle: React.CSSProperties = {
   gap: "12px",
 };
 
+const codexBtnStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: "5px 10px",
+  borderRadius: "999px",
+  border: "1px solid var(--border)",
+  background: "var(--bg-tertiary)",
+  color: "var(--text-secondary)",
+  cursor: "pointer",
+  fontFamily: "var(--font-sans)",
+  fontSize: "12px",
+  fontWeight: 600,
+  letterSpacing: "-0.01em",
+  transition: "border-color 0.15s, color 0.15s, background 0.15s",
+};
+
+const codexBtnActiveStyle: React.CSSProperties = {
+  background: "var(--accent)",
+  color: "var(--bg-primary)",
+  borderColor: "var(--accent)",
+};
+
 const cmdBtnStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -616,6 +828,51 @@ const cmdBtnStyle: React.CSSProperties = {
 const mainStyle: React.CSSProperties = {
   flex: 1,
   overflow: "hidden",
+};
+
+const flashContainerStyle: React.CSSProperties = {
+  position: "fixed",
+  right: "18px",
+  bottom: "18px",
+  zIndex: 1200,
+};
+
+const flashCardStyle: React.CSSProperties = {
+  minWidth: "280px",
+  maxWidth: "420px",
+  padding: "14px 16px",
+  borderRadius: "14px",
+  border: "1px solid rgba(255, 255, 255, 0.08)",
+  background: "rgba(10, 10, 10, 0.9)",
+  backdropFilter: "blur(12px)",
+  boxShadow: "0 18px 40px rgba(0, 0, 0, 0.28)",
+};
+
+const flashCardSuccessStyle: React.CSSProperties = {
+  border: "1px solid rgba(80, 227, 194, 0.24)",
+};
+
+const flashCardErrorStyle: React.CSSProperties = {
+  border: "1px solid rgba(255, 99, 105, 0.24)",
+};
+
+const flashCardInfoStyle: React.CSSProperties = {
+  border: "1px solid rgba(255, 255, 255, 0.12)",
+};
+
+const flashTitleStyle: React.CSSProperties = {
+  fontFamily: "var(--font-sans)",
+  fontSize: "13px",
+  fontWeight: 600,
+  color: "var(--text-primary)",
+};
+
+const flashDetailStyle: React.CSSProperties = {
+  marginTop: "4px",
+  fontFamily: "var(--font-sans)",
+  fontSize: "12px",
+  lineHeight: 1.5,
+  color: "var(--text-secondary)",
 };
 
 const handleStyle: React.CSSProperties = {

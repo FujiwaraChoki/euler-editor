@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { CompileResult, EulerConfig } from "../types";
+import type { CliIntegrationStatus, CodexEditResult, CodexStatus, CompileResult, EulerConfig } from "../types";
 
 export async function compileLatex(
   content: string,
@@ -55,6 +55,21 @@ export async function getSystemFonts(): Promise<string[]> {
   return invoke<string[]>("get_system_fonts");
 }
 
-export async function installCli(): Promise<string> {
-  return invoke<string>("install_cli");
+export async function getCliStatus(): Promise<CliIntegrationStatus> {
+  return invoke<CliIntegrationStatus>("get_cli_status");
+}
+
+export async function installCli(): Promise<CliIntegrationStatus> {
+  return invoke<CliIntegrationStatus>("install_cli");
+}
+
+export async function getCodexStatus(): Promise<CodexStatus> {
+  return invoke<CodexStatus>("get_codex_status");
+}
+
+export async function applyCodexEdit(prompt: string, filePath: string): Promise<CodexEditResult> {
+  return invoke<CodexEditResult>("apply_codex_edit", {
+    prompt,
+    filePath,
+  });
 }

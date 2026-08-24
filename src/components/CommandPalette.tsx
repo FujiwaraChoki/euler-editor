@@ -1,25 +1,32 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import type { EulerConfig, Theme } from "../types";
+import type { CliIntegrationStatus, EulerConfig, Theme } from "../types";
 import {
   buildFontOptions,
   normalizeStoredFontName,
 } from "../styles/fonts";
-import { installCli } from "../lib/tauri-commands";
+
+type View = "main" | "themes" | "compiler" | "debounce" | "ui-fonts" | "code-fonts" | "cli";
 
 interface CommandPaletteProps {
   isOpen: boolean;
   onClose: () => void;
   onNewDocument: () => void;
   onOpenDocument: () => void;
+  onOpenCodexAssistant: () => void;
   settings: EulerConfig;
   onUpdateSettings: (partial: Partial<EulerConfig>) => void;
   themes: Theme[];
   currentThemeName: string;
   onSetTheme: (name: string) => void;
   systemFonts: string[];
+  cliStatus: CliIntegrationStatus | null;
+  isCliStatusLoading: boolean;
+  isInstallingCli: boolean;
+  onInstallCli: () => Promise<void>;
+  onCopyCliCommand: () => Promise<void>;
+  currentFilePath: string | null;
+  initialView?: View;
 }
-
-type View = "main" | "themes" | "compiler" | "debounce" | "ui-fonts" | "code-fonts";
 
 const COMPILER_OPTIONS = ["pdflatex", "xelatex", "lualatex"] as const;
 
@@ -35,12 +42,20 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
   onClose,
   onNewDocument,
   onOpenDocument,
+  onOpenCodexAssistant,
   settings,
   onUpdateSettings,
   themes,
   currentThemeName,
   onSetTheme,
   systemFonts,
+  cliStatus,
+  isCliStatusLoading,
+  isInstallingCli,
+  onInstallCli,
+  onCopyCliCommand,
+  currentFilePath,
+  initialView = "main",
 }) => {
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -52,13 +67,13 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     if (isOpen) {
       setQuery("");
       setSelectedIndex(0);
-      setView("main");
+      setView(initialView);
       // Delay focus to ensure the input is mounted
       requestAnimationFrame(() => {
         inputRef.current?.focus();
       });
     }
-  }, [isOpen]);
+  }, [initialView, isOpen]);
 
   const debouncePresets = useMemo(
     () => [
@@ -87,9 +102,87 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
     () => buildFontOptions(systemFonts, "code"),
     [systemFonts],
   );
+  const cliSummary = useMemo(() => {
+    if (isCliStatusLoading && !cliStatus) {
+      return {
+        badge: "Checking",
+        title: "Checking helper status",
+        description: "Looking for the `euler` launcher Euler uses for Codex and terminal handoff.",
+      };
+    }
+
+    if (!cliStatus) {
+      return {
+        badge: "Unavailable",
+        title: "CLI helper unavailable",
+        description: "The backend did not return CLI status, so integration checks are temporarily unavailable.",
+      };
+    }
+
+    if (cliStatus.hasConflict) {
+      return {
+        badge: "Conflict",
+        title: "Another `euler` command is already installed",
+        description: cliStatus.discoveredPath
+          ? `Euler found a different command at ${cliStatus.discoveredPath}. Remove or rename it before installing this helper.`
+          : "Another `euler` command is blocking installation.",
+      };
+    }
+
+    if (cliStatus.installed) {
+      return {
+        badge: "Ready",
+        title: "Codex handoff is ready",
+        description: cliStatus.discoveredPath
+          ? `The launcher is active at ${cliStatus.discoveredPath}.`
+          : "The launcher is installed and ready to use.",
+      };
+    }
+
+    if (cliStatus.needsUpdate) {
+      return {
+        badge: "Update",
+        title: "Refresh the launcher",
+        description: cliStatus.discoveredPath
+          ? `The existing command at ${cliStatus.discoveredPath} points to an older Euler build.`
+          : "The launcher needs to be refreshed.",
+      };
+    }
+
+    return {
+      badge: "Setup",
+      title: "Install the `euler` launcher",
+      description: `Euler can install a small helper at ${cliStatus.installPath} so Codex or a terminal can open files directly.`,
+    };
+  }, [cliStatus, isCliStatusLoading]);
+  const cliPrimaryActionLabel = useMemo(() => {
+    if (isInstallingCli) return "Installing CLI helper...";
+    if (cliStatus?.installed) return "Reinstall CLI helper";
+    if (cliStatus?.needsUpdate) return "Update CLI helper";
+    return "Install CLI helper";
+  }, [cliStatus?.installed, cliStatus?.needsUpdate, isInstallingCli]);
 
   const mainActions: Action[] = useMemo(
     () => [
+      {
+        id: "open-codex",
+        label: "Open Codex Assistant",
+        description: "Ask Codex to edit the current LaTeX file",
+        onSelect: () => {
+          onClose();
+          onOpenCodexAssistant();
+        },
+      },
+      {
+        id: "cli-integration",
+        label: `Terminal Handoff: ${cliSummary.badge}`,
+        description: cliSummary.description,
+        onSelect: () => {
+          setView("cli");
+          setQuery("");
+          setSelectedIndex(0);
+        },
+      },
       {
         id: "toggle-autosave",
         label: `Auto-save: ${settings.auto_save ? "On" : "Off"}`,
@@ -196,20 +289,6 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
-        id: "install-cli",
-        label: "Install 'euler' CLI",
-        description: "Add euler command to PATH (/usr/local/bin)",
-        onSelect: async () => {
-          onClose();
-          try {
-            const result = await installCli();
-            alert(result);
-          } catch (err) {
-            alert(String(err));
-          }
-        },
-      },
-      {
         id: "new",
         label: "New Document",
         description: "Create a blank LaTeX document",
@@ -233,6 +312,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       onUpdateSettings,
       onNewDocument,
       onOpenDocument,
+      onOpenCodexAssistant,
       onClose,
       debouncePresets,
       themes,
@@ -241,6 +321,7 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       currentCodeFontName,
       uiFontOptions,
       codeFontOptions,
+      cliSummary,
     ],
   );
 
@@ -313,6 +394,54 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       })),
     [codeFontOptions, currentCodeFontName, onUpdateSettings, onClose],
   );
+  const cliActions: Action[] = useMemo(() => {
+    const actions: Action[] = [];
+
+    if (!cliStatus?.hasConflict) {
+      actions.push({
+        id: "cli-install",
+        label: cliPrimaryActionLabel,
+        description: cliStatus?.requiresElevation
+          ? "Euler may ask for administrator access to write into a shared bin directory."
+          : "Install without leaving the app.",
+        onSelect: () => {
+          if (isInstallingCli) return;
+          onInstallCli().catch(() => {});
+        },
+      });
+    }
+
+    if (cliStatus?.installed && currentFilePath) {
+      actions.push({
+        id: "cli-copy-current-file",
+        label: "Copy launch command for current file",
+        description: `euler \"${currentFilePath}\"`,
+        onSelect: () => {
+          onCopyCliCommand().catch(() => {});
+        },
+      });
+    }
+
+    if (cliStatus?.installPath) {
+      actions.push({
+        id: "cli-copy-install-path",
+        label: "Copy install location",
+        description: cliStatus.installPath,
+        onSelect: () => {
+          navigator.clipboard.writeText(cliStatus.installPath).catch(() => {});
+        },
+      });
+    }
+
+    return actions;
+  }, [
+    cliPrimaryActionLabel,
+    cliStatus,
+    currentFilePath,
+    isInstallingCli,
+    onCopyCliCommand,
+    onInstallCli,
+  ]);
 
   const currentActions =
     view === "themes"
@@ -325,6 +454,8 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
             ? uiFontActions
             : view === "code-fonts"
               ? codeFontActions
+              : view === "cli"
+                ? cliActions
           : mainActions;
 
   const filteredActions = useMemo(() => {
@@ -381,6 +512,26 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
       <div style={modalStyle} onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
         {/* Search input */}
         <div style={inputContainerStyle}>
+          {view === "cli" && (
+            <div style={contextPanelStyle}>
+              <div style={contextHeaderStyle}>
+                <span style={contextBadgeStyle}>{cliSummary.badge}</span>
+                <span style={contextEyebrowStyle}>Codex / CLI Integration</span>
+              </div>
+              <div style={contextTitleStyle}>{cliSummary.title}</div>
+              <div style={contextDescriptionStyle}>{cliSummary.description}</div>
+              {cliStatus?.linkedPath && (
+                <div style={contextMetaStyle}>
+                  Linked to <code style={contextCodeStyle}>{cliStatus.linkedPath}</code>
+                </div>
+              )}
+              {cliStatus?.installPath && (
+                <div style={contextMetaStyle}>
+                  Install target <code style={contextCodeStyle}>{cliStatus.installPath}</code>
+                </div>
+              )}
+            </div>
+          )}
           <input
             ref={inputRef}
             type="text"
@@ -400,8 +551,10 @@ const CommandPalette: React.FC<CommandPaletteProps> = ({
                     ? "Select debounce..."
                     : view === "ui-fonts"
                       ? "Select UI font..."
-                      : view === "code-fonts"
+                    : view === "code-fonts"
                         ? "Select code font..."
+                      : view === "cli"
+                        ? "Search helper actions..."
                       : ""
             }
             style={inputStyle}
@@ -458,6 +611,65 @@ const modalStyle: React.CSSProperties = {
 const inputContainerStyle: React.CSSProperties = {
   padding: "12px 16px",
   borderBottom: "1px solid var(--border)",
+};
+
+const contextPanelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "8px",
+  padding: "0 0 14px",
+};
+
+const contextHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+};
+
+const contextBadgeStyle: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  padding: "4px 8px",
+  borderRadius: "999px",
+  border: "1px solid rgba(255, 255, 255, 0.14)",
+  background: "rgba(255, 255, 255, 0.06)",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+  fontSize: "10px",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+};
+
+const contextEyebrowStyle: React.CSSProperties = {
+  color: "var(--text-muted)",
+  fontFamily: "var(--font-mono)",
+  fontSize: "11px",
+};
+
+const contextTitleStyle: React.CSSProperties = {
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-sans)",
+  fontSize: "14px",
+  fontWeight: 600,
+};
+
+const contextDescriptionStyle: React.CSSProperties = {
+  color: "var(--text-secondary)",
+  fontFamily: "var(--font-sans)",
+  fontSize: "12px",
+  lineHeight: 1.5,
+};
+
+const contextMetaStyle: React.CSSProperties = {
+  color: "var(--text-muted)",
+  fontFamily: "var(--font-sans)",
+  fontSize: "11px",
+  lineHeight: 1.4,
+};
+
+const contextCodeStyle: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  color: "var(--text-secondary)",
 };
 
 const inputStyle: React.CSSProperties = {

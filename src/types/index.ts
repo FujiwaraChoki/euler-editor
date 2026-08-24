@@ -5,6 +5,31 @@ export interface CompileResult {
   errors: string[];
 }
 
+export interface CliIntegrationStatus {
+  installed: boolean;
+  needsUpdate: boolean;
+  hasConflict: boolean;
+  installPath: string;
+  discoveredPath: string | null;
+  linkedPath: string | null;
+  sourcePath: string;
+  requiresElevation: boolean;
+}
+
+export interface CodexStatus {
+  available: boolean;
+  path: string | null;
+  version: string | null;
+  detail: string | null;
+}
+
+export interface CodexEditResult {
+  assistantMessage: string;
+  commandOutput: string;
+  editedFilePath: string;
+  elapsedMs: number;
+}
+
 export interface EulerConfig {
   compiler: string;
   auto_save: boolean;
